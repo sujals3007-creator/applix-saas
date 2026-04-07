@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+psycopg2-binary
+pdfplumber
+python-dotenv
+langchain-groq
+langchain-core
+beautifulsoup4
+httpx
+apscheduler
+bcrypt
+pyjwt
+pydantic

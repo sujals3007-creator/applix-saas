@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Job Agent — Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f4f6f9;color:#222;font-size:14px}
+header{background:#0a66c2;color:#fff;padding:14px 28px;display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:18px;font-weight:600}
+header span{font-size:13px;opacity:.85}
+#logoutLink{color:#fff;font-size:13px;cursor:pointer;text-decoration:underline}
+.container{max-width:1100px;margin:24px auto;padding:0 20px}
+.tab-menu { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+.tab-btn { background: none; border: none; padding: 10px 20px; font-size: 15px; font-weight: 600; color: #666; cursor: pointer; border-radius: 5px; }
+.tab-btn.active { background: #0a66c2; color: white; }
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
+.stat-card{background:#fff;border-radius:10px;padding:16px 18px;border:1px solid #e2e8f0}
+.stat-card .label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.stat-card .value{font-size:28px;font-weight:600;color:#0a66c2}
+.agent-bar{background:#fff;border-radius:10px;padding:12px 18px;margin-bottom:20px; display:flex;align-items:center;gap:12px;border:1px solid #e2e8f0}
+.dot{width:10px;height:10px;border-radius:50%;background:#ccc;flex-shrink:0}
+.dot.running{background:#16a34a;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.agent-bar .info{flex:1;font-size:13px;color:#444}
+.grid2{display:grid;grid-template-columns:1fr 360px;gap:18px}
+.card{background:#fff;border-radius:10px;padding:18px;border:1px solid #e2e8f0}
+.card h2{font-size:14px;font-weight:600;margin-bottom:14px;color:#333}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;text-transform:uppercase;color:#888; padding:6px 10px;border-bottom:1px solid #eee;}
+td{padding:9px 10px;border-bottom:1px solid #f5f5f5;font-size:13px;vertical-align:top}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}
+.badge.applied{background:#dcfce7;color:#166534}
+.badge.skipped{background:#fef9c3;color:#854d0e}
+.badge.error  {background:#fee2e2;color:#991b1b}
+.log-feed{max-height:480px;overflow-y:auto}
+.log-item{padding:8px 0;border-bottom:1px solid #f5f5f5;display:flex;gap:8px;}
+.form-input { width: 100%; padding: 10px; margin-top: 5px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 5px; }
+.save-btn { background: #16a34a; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.hidden{display:none}
+#loginScreen{max-width:380px;margin:80px auto;background:#fff;padding:32px; border-radius:12px;border:1px solid #e2e8f0}
+#loginScreen input{display:block;width:100%;padding:9px 12px;margin-bottom:12px; border:1px solid #ccc;border-radius:6px;font-size:14px}
+#loginScreen button{width:100%;padding:10px;border:none;border-radius:6px; background:#0a66c2;color:#fff;font-weight:600;cursor:pointer;}
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <h2 style="color:#0a66c2; margin-bottom:20px;">AI Job Agent</h2>
+  <input type="email" id="dEmail" placeholder="Email"/>
+  <input type="password" id="dPw" placeholder="Password"/>
+  <button onclick="dashLogin()">Login</button>
+  <div id="loginErr" style="color:red;font-size:13px;margin-top:8px;text-align:center"></div>
+</div>
+
+<div id="mainApp" class="hidden">
+  <header>
+    <h1>AI Job Agent</h1>
+    <div style="display:flex;align-items:center;gap:16px">
+      <span id="headerName"></span>
+      <span id="logoutLink" onclick="dashLogout()">Logout</span>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="tab-menu">
+        <button id="tabDashboard" class="tab-btn active" onclick="switchTab('dashboard')">Live Dashboard</button>
+        <button id="tabProfile" class="tab-btn" onclick="switchTab('profile')">Build AI Brain (Profile)</button>
+    </div>
+
+    <div id="viewDashboard">
+        <div class="stats">
+          <div class="stat-card"><div class="label">Total applied</div><div class="value" id="sTotalApplied">—</div></div>
+          <div class="stat-card"><div class="label">Applied today</div><div class="value" id="sAppliedToday">—</div></div>
+          <div class="stat-card"><div class="label">HR contacts</div><div class="value" id="sHrFound">—</div></div>
+          <div class="stat-card"><div class="label">Messages sent</div><div class="value" id="sMessages">—</div></div>
+          <div class="stat-card"><div class="label">Jobs queued</div><div class="value" id="sQueued">—</div></div>
+        </div>
+
+        <div class="agent-bar">
+          <div class="dot" id="agentDot"></div>
+          <div class="info" id="agentInfo">Checking agent status...</div>
+        </div>
+
+        <div class="grid2">
+          <div class="card">
+            <h2>Applied Jobs</h2>
+            <div style="overflow-x:auto">
+              <table>
+                <thead><tr><th>Role</th><th>Company</th><th>Status</th><th>Time</th></tr></thead>
+                <tbody id="jobsTable"><tr><td colspan="4" style="color:#aaa;text-align:center;padding:24px">Loading...</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <h2>Activity Log</h2>
+            <div class="log-feed" id="logFeed"><div style="color:#aaa;text-align:center;padding:24px">Loading...</div></div>
+          </div>
+        </div>
+    </div>
+
+    <div id="viewProfile" class="hidden card">
+        <h2>Configure Your AI Brain</h2>
+        
+        <div style="background: #e0f2fe; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #bae6fd;">
+            <h3 style="margin-bottom: 15px; color:#0369a1;">Outreach Settings (Required for Automated HR Emails)</h3>
+            <div class="form-grid">
+                <div>
+                    <label><strong>Your Gmail Address</strong></label>
+                    <input type="email" id="outreachEmail" class="form-input" placeholder="you@gmail.com">
+                </div>
+                <div>
+                    <label><strong>Gmail 16-Digit App Password</strong></label>
+                    <input type="password" id="outreachPass" class="form-input" placeholder="abcd efgh ijkl mnop">
+                </div>
+            </div>
+        </div>
+
+        <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 2px dashed #94a3b8;">
+            <label><strong>Upload Resume (PDF) to Auto-Fill Data</strong></label><br>
+            <input type="file" id="dashResumeFile" accept="application/pdf" style="margin-top: 10px;">
+            <button id="dashUploadBtn" class="save-btn" style="background:#0a66c2; margin-top:10px;">Parse with AI Brain</button>
+            <p id="uploadStatusMsg" style="margin-top: 10px; font-weight: bold;"></p>
+        </div>
+
+        <div id="dynamicFormContainer" class="hidden" style="border-top: 2px solid #e2e8f0; padding-top:20px;">
+            <h3 style="margin-bottom: 15px; color:#0a66c2;">Review & Edit Extracted Data</h3>
+            <p style="color:#ef4444; font-weight:bold; margin-bottom:15px;" id="validationWarning"></p>
+            
+            <div class="form-grid" id="masterFormGrid"></div>
+
+            <button id="saveProfileBtn" class="save-btn" style="margin-top: 20px;">Save Profile & Initialize AI</button>
+            <p id="statusMsg" style="text-align: center; margin-top: 15px; font-weight: bold;"></p>
+        </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "https://ai-job-agent-backend-qmq1.onrender.com";
+let authToken = localStorage.getItem("dash_token") || "";
+let refreshTimer = null;
+
+// FIX 3: Added LinkedIn and Prev Experience to the Master Keys
+const masterKeys = {
+    "q_name": "Full Name", "q_email": "Email", "q_phone": "Phone", "q_location": "Current Location", "q_relocate": "Willing to Relocate (Yes/No)",
+    "q_linkedin": "LinkedIn Profile URL", "q_yoe": "Total Years Experience (Number)", "q_summary": "Summary / Bio", "q_current_role": "Current Job Title", 
+    "q_prev_company": "Most Recent Company", "q_prev_exp": "Previous Work Experience Details", "q_langs": "Programming Languages", 
+    "q_python": "Python Experience (Yes/No/Years)", "q_ml": "Machine Learning Experience", "q_dl": "Deep Learning Exp", "q_nlp": "NLP Experience", 
+    "q_cv": "Computer Vision Exp", "q_llm": "LLM / Generative AI Exp", "q_frameworks": "Frameworks (React, etc)", "q_api": "API Development (Yes/No)", 
+    "q_cloud": "Cloud (AWS/GCP/Azure)", "q_devops": "DevOps / Docker", "q_project": "Best Project Name", "q_deployed": "Deployed Projects (Yes/No)", 
+    "q_github": "GitHub Link", "q_portfolio": "Portfolio Link", "q_degree": "Highest Degree", "q_university": "University", "q_grad_year": "Graduation Year",
+    "q_salary": "Expected CTC / Salary", "q_notice": "Notice Period (Days)", "q_immediate": "Can Join Immediately (Yes/No)",
+    "q_work_auth": "Authorized to Work in Target Country?", "q_visa": "Require Visa Sponsorship?"
+};
+
+function switchTab(tabName) {
+    document.getElementById('viewDashboard').classList.add('hidden');
+    document.getElementById('viewProfile').classList.add('hidden');
+    document.getElementById('tabDashboard').classList.remove('active');
+    document.getElementById('tabProfile').classList.remove('active');
+    if (tabName === 'dashboard') {
+        document.getElementById('viewDashboard').classList.remove('hidden');
+        document.getElementById('tabDashboard').classList.add('active');
+    } else {
+        document.getElementById('viewProfile').classList.remove('hidden');
+        document.getElementById('tabProfile').classList.add('active');
+    }
+}
+
+async function dashLogin() {
+    const email = document.getElementById("dEmail").value.trim();
+    const pw = document.getElementById("dPw").value;
+    const resp = await fetch(`${API}/api/auth/login`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: pw }),
+    });
+    const data = await resp.json();
+    if (data.token) {
+        authToken = data.token;
+        localStorage.setItem("dash_token", authToken);
+        localStorage.setItem("dash_user", data.full_name || data.email);
+        showDashboard();
+    } else { document.getElementById("loginErr").innerText = data.detail || "Login failed."; }
+}
+
+function dashLogout() {
+    localStorage.removeItem("dash_token"); localStorage.removeItem("dash_user");
+    authToken = ""; clearInterval(refreshTimer);
+    document.getElementById("mainApp").classList.add("hidden");
+    document.getElementById("loginScreen").classList.remove("hidden");
+}
+
+function authHeaders() { return { "Authorization": `Bearer ${authToken}` }; }
+
+function showDashboard() {
+    document.getElementById("loginScreen").classList.add("hidden");
+    document.getElementById("mainApp").classList.remove("hidden");
+    document.getElementById("headerName").innerText = localStorage.getItem("dash_user") || "";
+    loadAll();
+    refreshTimer = setInterval(loadAll, 30000);
+}
+
+async function loadAll() { await Promise.all([loadStats(), loadJobs(), loadLogs(), loadAgentStatus()]); }
+
+async function loadStats() {
+    try {
+        const r = await fetch(`${API}/api/dashboard/stats`, { headers: authHeaders() }); const d = await r.json();
+        document.getElementById("sTotalApplied").innerText = d.total_applied ?? "—"; document.getElementById("sAppliedToday").innerText = d.applied_today ?? "—";
+        document.getElementById("sHrFound").innerText = d.hr_found ?? "—"; document.getElementById("sMessages").innerText = d.messages_sent ?? "—";
+        document.getElementById("sQueued").innerText = d.queued_jobs ?? "—";
+    } catch {}
+}
+
+async function loadJobs() {
+    try {
+        const r = await fetch(`${API}/api/dashboard/jobs`, { headers: authHeaders() }); const d = await r.json();
+        const tbody = document.getElementById("jobsTable");
+        if (!d.jobs || !d.jobs.length) { tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No apps yet.</td></tr>`; return; }
+        tbody.innerHTML = d.jobs.map(j => `<tr><td><a style="color:#0a66c2;" href="${j.job_url||'#'}" target="_blank">${j.title}</a></td><td>${j.company}</td><td><span class="badge ${j.status}">${j.status}</span></td><td style="color:#888">${new Date(j.applied_at).toLocaleDateString()}</td></tr>`).join("");
+    } catch {}
+}
+
+async function loadLogs() {
+    try {
+        const r = await fetch(`${API}/api/dashboard/logs`, { headers: authHeaders() }); const d = await r.json();
+        const feed = document.getElementById("logFeed");
+        if (!d.logs || !d.logs.length) { feed.innerHTML = `<div style="text-align:center;">No activity yet.</div>`; return; }
+        feed.innerHTML = d.logs.map(l => `<div class="log-item"><div><div style="font-size:12px;color:#444;">${l.message}</div><div style="font-size:11px;color:#aaa;">${new Date(l.created_at).toLocaleTimeString()}</div></div></div>`).join("");
+    } catch {}
+}
+
+async function loadAgentStatus() {
+    try {
+        const r = await fetch(`${API}/api/agent/status`, { headers: authHeaders() }); const d = await r.json();
+        const dot = document.getElementById("agentDot"); const info = document.getElementById("agentInfo");
+        if (d.scanner_running) { dot.classList.add("running"); info.innerText = "Agent is running."; } 
+        else { dot.classList.remove("running"); info.innerText = "Agent is offline."; }
+    } catch {}
+}
+
+document.getElementById("dashUploadBtn").addEventListener("click", async function() {
+    const fileInput = document.getElementById("dashResumeFile");
+    const statusMsg = document.getElementById("uploadStatusMsg");
+    if (!fileInput.files.length) { statusMsg.innerText = "❌ Please select a PDF file first."; statusMsg.style.color = "red"; return; }
+
+    statusMsg.innerText = "⏳ Extracting details with AI... please wait."; statusMsg.style.color = "#0a66c2";
+    const formData = new FormData(); formData.append("file", fileInput.files[0]);
+
+    try {
+        const resp = await fetch(`${API}/api/parse-resume-to-form`, { method: "POST", headers: authHeaders(), body: formData });
+        const data = await resp.json();
+        
+        if (data.status === "success" && data.data) {
+            statusMsg.innerText = "✅ Resume parsed! Review the extracted data below."; statusMsg.style.color = "green";
+            const grid = document.getElementById("masterFormGrid");
+            grid.innerHTML = ""; 
+            
+            for (const [key, label] of Object.entries(masterKeys)) {
+                const val = data.data[key] || "";
+                grid.innerHTML += `
+                    <div>
+                        <label style="font-size:11px; font-weight:bold;">${label}</label>
+                        <input type="text" id="mf_${key}" data-label="${label}" value="${val}" class="form-input">
+                    </div>
+                `;
+            }
+            document.getElementById("dynamicFormContainer").classList.remove("hidden");
+        } else {
+            statusMsg.innerText = "❌ " + (data.message || "Failed to parse resume."); statusMsg.style.color = "red";
+        }
+    } catch (err) { statusMsg.innerText = "❌ Network error. Is the Python server running?"; statusMsg.style.color = "red"; }
+});
+
+document.getElementById("saveProfileBtn").addEventListener("click", async function() {
+    const status = document.getElementById("statusMsg");
+    status.innerText = "⏳ Saving to Cloud..."; status.style.color = "#0a66c2";
+
+    let compiledQA = "CANDIDATE Q&A DATA:\n";
+    for (const key of Object.keys(masterKeys)) {
+        const inp = document.getElementById("mf_" + key);
+        if(!inp) continue;
+        compiledQA += `- ${inp.getAttribute("data-label")}: ${inp.value.trim()}\n`;
+    }
+
+    const payload = {
+        target_roles: ["AI Engineer"], // Or pull dynamically
+        years_experience: parseFloat(document.getElementById("mf_q_yoe")?.value) || 0,
+        expected_ctc_inr: parseInt(document.getElementById("mf_q_salary")?.value) || 0,
+        master_qa_data: compiledQA,
+        sender_email: document.getElementById("outreachEmail").value.trim(),
+        app_password: document.getElementById("outreachPass").value.trim()
+    };
+
+    try {
+        const resp = await fetch(`${API}/api/profile/save`, {
+            method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (data.status === "success") {
+            status.innerText = "✅ Profile securely saved! Your AI Agent is fully armed."; status.style.color = "green";
+        } else { status.innerText = "❌ Error: " + data.message; status.style.color = "red"; }
+    } catch (e) { status.innerText = "❌ Connection failed."; status.style.color = "red"; }
+});
+
+if (authToken) showDashboard();
+</script>
+</body>
+</html>

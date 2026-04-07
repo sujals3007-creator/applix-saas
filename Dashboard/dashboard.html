@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Job Agent — Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f4f6f9;color:#222;font-size:14px}
+header{background:#0a66c2;color:#fff;padding:14px 28px;display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:18px;font-weight:600}
+header span{font-size:13px;opacity:.85}
+#logoutLink{color:#fff;font-size:13px;cursor:pointer;text-decoration:underline}
+.container{max-width:1100px;margin:24px auto;padding:0 20px}
+
+/* Stats row */
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
+.stat-card{background:#fff;border-radius:10px;padding:16px 18px;border:1px solid #e2e8f0}
+.stat-card .label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.stat-card .value{font-size:28px;font-weight:600;color:#0a66c2}
+
+/* Agent status bar */
+.agent-bar{background:#fff;border-radius:10px;padding:12px 18px;margin-bottom:20px;
+           display:flex;align-items:center;gap:12px;border:1px solid #e2e8f0}
+.dot{width:10px;height:10px;border-radius:50%;background:#ccc;flex-shrink:0}
+.dot.running{background:#16a34a;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.agent-bar .info{flex:1;font-size:13px;color:#444}
+.agent-bar .next{font-size:12px;color:#888}
+
+/* Two-column layout */
+.grid2{display:grid;grid-template-columns:1fr 360px;gap:18px}
+.card{background:#fff;border-radius:10px;padding:18px;border:1px solid #e2e8f0}
+.card h2{font-size:14px;font-weight:600;margin-bottom:14px;color:#333}
+
+/* Jobs table */
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;text-transform:uppercase;color:#888;
+   padding:6px 10px;border-bottom:1px solid #eee;letter-spacing:.4px}
+td{padding:9px 10px;border-bottom:1px solid #f5f5f5;font-size:13px;vertical-align:top}
+tr:last-child td{border-bottom:none}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}
+.badge.applied{background:#dcfce7;color:#166534}
+.badge.skipped{background:#fef9c3;color:#854d0e}
+.badge.error  {background:#fee2e2;color:#991b1b}
+a.job-link{color:#0a66c2;text-decoration:none}
+a.job-link:hover{text-decoration:underline}
+
+/* Activity log */
+.log-feed{max-height:480px;overflow-y:auto}
+.log-item{padding:8px 0;border-bottom:1px solid #f5f5f5;display:flex;gap:8px;align-items:flex-start}
+.log-item:last-child{border-bottom:none}
+.log-icon{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;
+          justify-content:center;font-size:12px;flex-shrink:0;margin-top:1px}
+.log-icon.applied     {background:#dcfce7;color:#16a34a}
+.log-icon.scan        {background:#dbeafe;color:#1d4ed8}
+.log-icon.hr_found    {background:#f3e8ff;color:#7c3aed}
+.log-icon.message_sent{background:#fef9c3;color:#854d0e}
+.log-icon.error       {background:#fee2e2;color:#991b1b}
+.log-icon.default     {background:#f1f5f9;color:#64748b}
+.log-msg{font-size:12px;color:#444;line-height:1.4}
+.log-time{font-size:11px;color:#aaa;margin-top:2px}
+
+/* Login screen */
+#loginScreen{max-width:380px;margin:80px auto;background:#fff;padding:32px;
+             border-radius:12px;border:1px solid #e2e8f0}
+#loginScreen h2{margin-bottom:20px;color:#0a66c2}
+#loginScreen input{display:block;width:100%;padding:9px 12px;margin-bottom:12px;
+                   border:1px solid #ccc;border-radius:6px;font-size:14px}
+#loginScreen button{width:100%;padding:10px;border:none;border-radius:6px;
+                    background:#0a66c2;color:#fff;font-weight:600;cursor:pointer;font-size:14px}
+#loginErr{color:red;font-size:13px;margin-top:8px;text-align:center}
+
+.hidden{display:none}
+</style>
+</head>
+<body>
+
+<!-- Login screen -->
+<div id="loginScreen">
+  <h2>AI Job Agent</h2>
+  <input type="email"    id="dEmail" placeholder="Email"/>
+  <input type="password" id="dPw"    placeholder="Password"/>
+  <button onclick="dashLogin()">Login</button>
+  <div id="loginErr"></div>
+</div>
+
+<!-- Dashboard -->
+<div id="dashboard" class="hidden">
+  <header>
+    <h1>AI Job Agent Dashboard</h1>
+    <div style="display:flex;align-items:center;gap:16px">
+      <span id="headerName"></span>
+      <span id="logoutLink" onclick="dashLogout()">Logout</span>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Stats -->
+    <div class="stats">
+      <div class="stat-card">
+        <div class="label">Total applied</div>
+        <div class="value" id="sTotalApplied">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Applied today</div>
+        <div class="value" id="sAppliedToday">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">HR contacts found</div>
+        <div class="value" id="sHrFound">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Messages sent</div>
+        <div class="value" id="sMessages">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Jobs queued</div>
+        <div class="value" id="sQueued">—</div>
+      </div>
+    </div>
+
+    <!-- Agent status -->
+    <div class="agent-bar">
+      <div class="dot" id="agentDot"></div>
+      <div class="info" id="agentInfo">Checking agent status...</div>
+      <div class="next" id="agentNext"></div>
+    </div>
+
+    <!-- Main grid -->
+    <div class="grid2">
+      <!-- Applied jobs table -->
+      <div class="card">
+        <h2>Applied Jobs</h2>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>Company</th>
+                <th>Status</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="jobsTable">
+              <tr><td colspan="4" style="color:#aaa;text-align:center;padding:24px">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Activity log -->
+      <div class="card">
+        <h2>Activity Log</h2>
+        <div class="log-feed" id="logFeed">
+          <div style="color:#aaa;text-align:center;padding:24px">Loading...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "http://127.0.0.1:8000";
+let authToken = localStorage.getItem("dash_token") || "";
+let refreshTimer = null;
+
+async function dashLogin() {
+    const email = document.getElementById("dEmail").value.trim();
+    const pw    = document.getElementById("dPw").value;
+    const err   = document.getElementById("loginErr");
+    err.innerText = "";
+    const resp = await fetch(`${API}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: pw }),
+    });
+    const data = await resp.json();
+    if (data.token) {
+        authToken = data.token;
+        localStorage.setItem("dash_token", authToken);
+        localStorage.setItem("dash_user", data.full_name || data.email);
+        showDashboard();
+    } else {
+        err.innerText = data.detail || "Login failed.";
+    }
+}
+
+function dashLogout() {
+    localStorage.removeItem("dash_token");
+    localStorage.removeItem("dash_user");
+    authToken = "";
+    clearInterval(refreshTimer);
+    document.getElementById("dashboard").classList.add("hidden");
+    document.getElementById("loginScreen").classList.remove("hidden");
+}
+
+function authHeaders() {
+    return { "Authorization": `Bearer ${authToken}` };
+}
+
+function showDashboard() {
+    document.getElementById("loginScreen").classList.add("hidden");
+    document.getElementById("dashboard").classList.remove("hidden");
+    document.getElementById("headerName").innerText =
+        localStorage.getItem("dash_user") || "";
+    loadAll();
+    refreshTimer = setInterval(loadAll, 30000);
+}
+
+async function loadAll() {
+    await Promise.all([loadStats(), loadJobs(), loadLogs(), loadAgentStatus()]);
+}
+
+async function loadStats() {
+    try {
+        const r = await fetch(`${API}/api/dashboard/stats`, { headers: authHeaders() });
+        const d = await r.json();
+        document.getElementById("sTotalApplied").innerText = d.total_applied ?? "—";
+        document.getElementById("sAppliedToday").innerText = d.applied_today  ?? "—";
+        document.getElementById("sHrFound").innerText      = d.hr_found        ?? "—";
+        document.getElementById("sMessages").innerText     = d.messages_sent   ?? "—";
+        document.getElementById("sQueued").innerText       = d.queued_jobs     ?? "—";
+    } catch {}
+}
+
+async function loadJobs() {
+    try {
+        const r = await fetch(`${API}/api/dashboard/jobs`, { headers: authHeaders() });
+        const d = await r.json();
+        const tbody = document.getElementById("jobsTable");
+        if (!d.jobs || d.jobs.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" style="color:#aaa;text-align:center;padding:24px">No applications yet.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = d.jobs.map(j => {
+            const when = new Date(j.applied_at).toLocaleString("en-IN", {
+                day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit"
+            });
+            const badge = `<span class="badge ${j.status}">${j.status}</span>`;
+            const link  = j.job_url
+                ? `<a class="job-link" href="${j.job_url}" target="_blank">${j.title}</a>`
+                : j.title;
+            return `<tr><td>${link}</td><td>${j.company}</td><td>${badge}</td><td style="color:#888">${when}</td></tr>`;
+        }).join("");
+    } catch {}
+}
+
+async function loadLogs() {
+    try {
+        const r = await fetch(`${API}/api/dashboard/logs`, { headers: authHeaders() });
+        const d = await r.json();
+        const feed = document.getElementById("logFeed");
+        if (!d.logs || d.logs.length === 0) {
+            feed.innerHTML = `<div style="color:#aaa;text-align:center;padding:24px">No activity yet.</div>`;
+            return;
+        }
+        const icons = {
+            applied:      "✓",
+            scan:         "⟳",
+            hr_found:     "👤",
+            message_sent: "✉",
+            error:        "!",
+        };
+        feed.innerHTML = d.logs.map(l => {
+            const icon  = icons[l.event_type] || "•";
+            const cls   = icons[l.event_type] ? l.event_type : "default";
+            const when  = new Date(l.created_at).toLocaleTimeString("en-IN", {
+                hour:"2-digit", minute:"2-digit"
+            });
+            return `<div class="log-item">
+              <div class="log-icon ${cls}">${icon}</div>
+              <div><div class="log-msg">${l.message}</div>
+                   <div class="log-time">${when}</div></div>
+            </div>`;
+        }).join("");
+    } catch {}
+}
+
+async function loadAgentStatus() {
+    try {
+        const r = await fetch(`${API}/api/agent/status`, { headers: authHeaders() });
+        const d = await r.json();
+        const dot  = document.getElementById("agentDot");
+        const info = document.getElementById("agentInfo");
+        const next = document.getElementById("agentNext");
+        if (d.scanner_running) {
+            dot.classList.add("running");
+            info.innerText = d.errors_last_hour > 0
+                ? `Agent running — ${d.errors_last_hour} error(s) in last hour`
+                : "Agent is running — monitoring for new jobs";
+        } else {
+            dot.classList.remove("running");
+            info.innerText = "Agent is not running. Start Python server to activate.";
+        }
+        if (d.next_scan) {
+            const t = new Date(d.next_scan).toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"});
+            next.innerText = `Next scan: ${t}`;
+        }
+    } catch {}
+}
+
+// Auto-login if token exists
+if (authToken) showDashboard();
+</script>
+</body>
+</html>
