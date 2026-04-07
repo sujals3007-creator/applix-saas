@@ -94,3 +94,35 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         }
     }
 });
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "HARVEST_COOKIES") {
+        
+        // Grab the li_at cookie
+        chrome.cookies.get({ url: 'https://www.linkedin.com', name: 'li_at' }, (li_at_cookie) => {
+            if (!li_at_cookie) { sendResponse({ success: false }); return; }
+            
+            // Grab the JSESSIONID cookie
+            chrome.cookies.get({ url: 'https://www.linkedin.com', name: 'JSESSIONID' }, (jsession_cookie) => {
+                if (!jsession_cookie) { sendResponse({ success: false }); return; }
+                
+                // Format JSESSIONID properly (sometimes it has quotes around it)
+                let clean_jsession = jsession_cookie.value.replace(/"/g, '');
+
+                // Beam to the Render Backend
+                fetch("https://ai-job-agent-backend-qmq1.onrender.com/api/save-cookies", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    // In the future, we will send an Auth token here to attach these cookies to the specific candidate's DB row
+                    body: JSON.stringify({ 
+                        li_at: li_at_cookie.value, 
+                        jsessionid: clean_jsession 
+                    })
+                })
+                .then(r => r.json())
+                .then(data => sendResponse({ success: true }))
+                .catch(err => sendResponse({ success: false }));
+            });
+        });
+        return true; // Keeps the message channel open for async response
+    }
+});

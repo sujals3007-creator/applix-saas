@@ -364,6 +364,23 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
             }
         }
     }
+    // 🌟 THE NEW RESUME FIX: Smart click logic
+ const resumeLabel = document.querySelector('label[for*="urn:li:fsd_profileDocument"]');
+ const resumeInput = document.querySelector('input[type="radio"][value*="urn:li:fsd_profileDocument"]');
+
+ if (resumeInput) {
+     if (resumeInput.checked || resumeInput.getAttribute('aria-checked') === 'true') {
+         agentLog("⏭️ Resume is already selected. Skipping click.", "#cbd5e1");
+     } else {
+         agentLog("✅ Selecting the saved resume...", "#10b981");
+         if (resumeLabel) { resumeLabel.click(); } 
+         else { resumeInput.click(); }
+         await humanDelay(500, 800);
+     }
+ }
+
+
+
 
     const errors = deepQuerySelectorAll(".artdeco-inline-feedback--error, [data-test-form-element-error-message]", modal).filter(e => e.getBoundingClientRect().width > 0);
     if (errors.length) {

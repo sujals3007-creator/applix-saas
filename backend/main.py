@@ -497,4 +497,25 @@ def agent_status(user=Depends(get_current_user)):
         "last_activity":   dict(last_log) if last_log else None,
         "errors_last_hour": recent_errors,
     }
-    
+
+from pydantic import BaseModel
+
+class CookiePayload(BaseModel):
+    li_at: str
+    jsessionid: str
+
+@app.post("/api/save-cookies")
+def save_cookies(payload: CookiePayload):
+    """Receives fresh LinkedIn cookies from the candidate's Chrome Extension."""
+    try:
+        # Phase 1: Update the environment variables in memory so the monitor works immediately
+        os.environ["LINKEDIN_LI_AT"] = payload.li_at
+        os.environ["LINKEDIN_JSESSIONID"] = payload.jsessionid
+        
+        # NOTE: For a multi-tenant SaaS, you wouldn't save these to the global .env or memory. 
+        # You would save them directly to the `users` table in PostgreSQL so each user 
+        # has their own dedicated scraper session. We will migrate to that in Phase 4.
+        
+        return {"status": "success", "message": "Cookies synchronized successfully."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

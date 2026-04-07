@@ -413,4 +413,20 @@ document.addEventListener("DOMContentLoaded", async function () {
         });
     });
 
-}); // end DOMContentLoaded
+}); 
+document.getElementById('syncCookiesBtn').addEventListener('click', () => {
+    const statusText = document.getElementById('cookieStatus');
+    statusText.innerText = "⏳ Extracting credentials...";
+    statusText.style.color = "#0a66c2";
+
+    // Send message to background.js to grab the cookies
+    chrome.runtime.sendMessage({ action: "HARVEST_COOKIES" }, (response) => {
+        if (response && response.success) {
+            statusText.innerText = "✅ Connection Synced!";
+            statusText.style.color = "green";
+        } else {
+            statusText.innerText = "❌ Please log into LinkedIn first.";
+            statusText.style.color = "red";
+        }
+    });
+});
