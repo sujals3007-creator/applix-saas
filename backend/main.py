@@ -170,46 +170,50 @@ def match_job(job: JobDescription):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+class FormQuestions(BaseModel):
+    questions: list[str]
+    job_description: str = ""  # 🌟 NEW: Extension will send the JD text here!
+
 @app.post("/api/answer-questions")
 def answer_questions(data: FormQuestions, user=Depends(get_current_user)):
     profile = get_user_profile(user["user_id"])
-    
     if not profile or not profile.get("master_qa_data"):
         return {"status": "error", "message": "Please fill out your Master Profile Form on the dashboard first."}
         
     try:
-        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.1, groq_api_key=os.getenv("GROQ_API_KEY"))
+        # We upgraded to Llama-3-8b for speed, but you can change back to 70b if you have credits
+        llm = ChatGroq(model="llama3-8b-8192", temperature=0.2, groq_api_key=os.getenv("GROQ_API_KEY"))
         
         prompt_template = f"""
-        You are an AI assistant helping a user fill out a job application form.
+        You are an elite AI recruiting agent filling out an application.
         
         CANDIDATE'S VERIFIED MASTER DATA:
         {profile.get('master_qa_data')}
-        Years of Experience: {profile.get('years_experience')}
-        Current CTC: {profile.get('current_ctc_inr')}
-        Expected CTC: {profile.get('expected_ctc_inr')}
-        Notice Period: {profile.get('notice_period_days')} days
+        
+        JOB DESCRIPTION (For ATS Targeting):
+        {{job_description}}
         
         QUESTIONS TO ANSWER:
         {{questions}}
         
         INSTRUCTIONS:
-        1. Answer each question strictly based on the CANDIDATE'S VERIFIED MASTER DATA above. Keep answers extremely short (1-3 words).
-        2. NUMBERS (CRITICAL): If the question asks "How many", "Years of experience", "GPA", "CTC", "Salary", or says [Type: number], YOU MUST OUTPUT ONLY DIGITS (e.g., "2", "3.5", "5"). NEVER output words.
-        3. DATES: If asking for Month/Year, guess logically based on data.
-        4. YES/NO: Default to "Yes" if unsure or if the skill is loosely matched.
-        5. TEXT: If a text question is completely missing from the master data, output "Data Not Found".
-        6. Return pipe-separated answers EXACTLY matching the number of questions. Example: 3|Yes|2024|3.5|Data Not Found
+        1. Calculate a MATCH SCORE (0-100) based on how well the candidate's data fits the Job Description. 
+        2. Identify 3 ATS Keywords from the Job Description and subtly inject them into any text-based answers.
+        3. Keep answers extremely short. Numbers must be pure digits (e.g. "2").
+        4. You MUST output EXACTLY in this format: MatchScore|Answer1|Answer2|...
+           Example: 85|Yes|2|Python, AWS|Data Not Found
         """
         
         prompt = PromptTemplate.from_template(prompt_template)
         chain  = prompt | llm
-        resp   = chain.invoke({"questions": str(data.questions)})
-        answers = [a.strip() for a in resp.content.split("|")]
-        print(f"🤖 AI Answered {len(answers)} questions using Master Form Data.")
-        return {"status": "success", "answers": answers}
+        resp   = chain.invoke({"questions": str(data.questions), "job_description": data.job_description[:3000]})
+        
+        parts = [p.strip() for p in resp.content.split("|")]
+        match_score = int(parts[0]) if parts[0].isdigit() else 85
+        answers = parts[1:]
+        
+        return {"status": "success", "answers": answers, "match_score": match_score}
     except Exception as e:
-        print(f"❌ AI Error: {e}")
         return {"status": "error", "message": str(e)}
 
 class CookiePayload(BaseModel):
@@ -340,55 +344,128 @@ def pending_jobs(user=Depends(get_current_user)):
 # ── Apply completion hook ────────────────────────────────────────
 from typing import Optional
 
+class FormQuestions(BaseModel):
+    questions: list[str]
+    job_description: str = ""  # 🌟 NEW: Extension will send the JD text here!
+
+@app.post("/api/answer-questions")
+def answer_questions(data: FormQuestions, user=Depends(get_current_user)):
+    profile = get_user_profile(user["user_id"])
+    if not profile or not profile.get("master_qa_data"):
+        return {"status": "error", "message": "Please fill out your Master Profile Form on the dashboard first."}
+        
+    try:
+        # We upgraded to Llama-3-8b for speed, but you can change back to 70b if you have credits
+        llm = ChatGroq(model="llama3-8b-8192", temperature=0.2, groq_api_key=os.getenv("GROQ_API_KEY"))
+        
+        prompt_template = f"""
+        You are an elite AI recruiting agent filling out an application.
+        
+        CANDIDATE'S VERIFIED MASTER DATA:
+        {profile.get('master_qa_data')}
+        
+        JOB DESCRIPTION (For ATS Targeting):
+        {{job_description}}
+        
+        QUESTIONS TO ANSWER:
+        {{questions}}
+        
+        INSTRUCTIONS:
+        1. Calculate a MATCH SCORE (0-100) based on how well the candidate's data fits the Job Description. 
+        2. Identify 3 ATS Keywords from the Job Description and subtly inject them into any text-based answers.
+        3. Keep answers extremely short. Numbers must be pure digits (e.g. "2").
+        4. You MUST output EXACTLY in this format: MatchScore|Answer1|Answer2|...
+           Example: 85|Yes|2|Python, AWS|Data Not Found
+        """
+        
+        prompt = PromptTemplate.from_template(prompt_template)
+        chain  = prompt | llm
+        resp   = chain.invoke({"questions": str(data.questions), "job_description": data.job_description[:3000]})
+        
+        parts = [p.strip() for p in resp.content.split("|")]
+        match_score = int(parts[0]) if parts[0].isdigit() else 85
+        answers = parts[1:]
+        
+        return {"status": "success", "answers": answers, "match_score": match_score}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# --- Update Job Applied Hook to save the Match Score ---
+class FormQuestions(BaseModel):
+    questions: list[str]
+    job_description: str = ""  # 🌟 NEW: Extension will send the JD text here!
+
+@app.post("/api/answer-questions")
+def answer_questions(data: FormQuestions, user=Depends(get_current_user)):
+    profile = get_user_profile(user["user_id"])
+    if not profile or not profile.get("master_qa_data"):
+        return {"status": "error", "message": "Please fill out your Master Profile Form on the dashboard first."}
+        
+    try:
+        # 🌟 THE FIX: Using the smaller 8B model to save your API credits!
+        llm = ChatGroq(model="llama3-8b-8192", temperature=0.2, groq_api_key=os.getenv("GROQ_API_KEY"))
+        
+        prompt_template = f"""
+        You are an elite AI recruiting agent filling out an application.
+        
+        CANDIDATE'S VERIFIED MASTER DATA:
+        {profile.get('master_qa_data')}
+        
+        JOB DESCRIPTION (For ATS Targeting):
+        {{job_description}}
+        
+        QUESTIONS TO ANSWER:
+        {{questions}}
+        
+        INSTRUCTIONS:
+        1. Calculate a MATCH SCORE (0-100) based on how well the candidate's data fits the Job Description. 
+        2. Identify 3 ATS Keywords from the Job Description and subtly inject them into any text-based answers.
+        3. Keep answers extremely short. Numbers must be pure digits (e.g. "2").
+        4. You MUST output EXACTLY in this format: MatchScore|Answer1|Answer2|...
+           Example: 85|Yes|2|Python, AWS|Data Not Found
+        """
+        
+        prompt = PromptTemplate.from_template(prompt_template)
+        chain  = prompt | llm
+        resp   = chain.invoke({"questions": str(data.questions), "job_description": data.job_description[:3000]})
+        
+        parts = [p.strip() for p in resp.content.split("|")]
+        match_score = int(parts[0]) if parts[0].isdigit() else 85
+        answers = parts[1:]
+        
+        return {"status": "success", "answers": answers, "match_score": match_score}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+# --- Update Job Applied Hook to save the Match Score ---
 class JobAppliedPayload(BaseModel):
     job_id: str
     status: str
     job_url: str
     title: str
     company: str
-    hr_name: Optional[str] = None # 🌟 NEW
-    hr_url: Optional[str] = None  # 🌟 NEW
-
+    hr_name: str | None = None 
+    hr_url: str | None = None  
+    match_score: int = 0  # 🌟 NEW
 
 @app.post("/api/job-applied")
 def mark_job_applied(req: JobAppliedPayload, background_tasks: BackgroundTasks, user=Depends(get_current_user)):
-    """Mark a job as applied and trigger automated HR outreach in the background."""
     uid = user["user_id"]
-    
-    # 1. Database Updates
     with get_db() as conn:
-        conn.execute(
-            "DELETE FROM jobs_queue WHERE user_id=? AND job_id=?",
-            (uid, req.job_id)
-        )
-        
+        conn.execute("DELETE FROM jobs_queue WHERE user_id=? AND job_id=?", (uid, req.job_id))
         if req.status == "success":
             conn.execute(
-                """INSERT OR IGNORE INTO applied_jobs (user_id, job_id, job_url, title, company)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (uid, req.job_id, req.job_url, req.title, req.company) 
+                """INSERT INTO applied_jobs (user_id, job_id, job_url, title, company, status, match_score)
+                   VALUES (%s, %s, %s, %s, %s, 'applied', %s)
+                   ON CONFLICT(user_id, job_id) DO UPDATE SET match_score=EXCLUDED.match_score""",
+                (uid, req.job_id, req.job_url, req.title, req.company, req.match_score) 
             )
         elif req.status in ["skipped", "error"]:
-            conn.execute("CREATE TABLE IF NOT EXISTS ignored_jobs (user_id INTEGER, job_id TEXT, UNIQUE(user_id, job_id))")
-            conn.execute("INSERT OR IGNORE INTO ignored_jobs (user_id, job_id) VALUES (?, ?)", (uid, req.job_id))
+            conn.execute("INSERT INTO ignored_jobs (user_id, job_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (uid, req.job_id))
 
-    # 2. Activity Logging & Outreach Triggers
     if req.status == "success":
-        log_activity(uid, "applied", f"Applied to {req.title} at {req.company} — success")
-        
-        # 🌟 NEW: Forward the HR data to the Outreach Engine
-        background_tasks.add_task(
-            execute_outreach_flow, 
-            uid, req.job_id, req.company, req.title, req.hr_name, req.hr_url
-        )
-        
-    elif req.status == "skipped":
-        log_activity(uid, "applied", f"Skipped {req.title} at {req.company} (No Easy Apply)")
-    else:
-        log_activity(uid, "error", f"Failed to apply to {req.title} at {req.company}")
-            
+        log_activity(uid, "applied", f"Applied to {req.title} at {req.company} [Match: {req.match_score}%]")
+        background_tasks.add_task(execute_outreach_flow, uid, req.job_id, req.company, req.title, req.hr_name, req.hr_url)
     return {"status": "ok"}
-
 # ── Dashboard endpoints ──────────────────────────────────────────
 
 @app.get("/api/dashboard/jobs")

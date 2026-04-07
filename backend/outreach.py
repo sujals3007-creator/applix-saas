@@ -110,38 +110,67 @@ def generate_ai_email_body(profile: dict, full_name: str, hr_name: str, job_titl
     return final_email.strip()
 
 def send_email(user_id: int, to_email: str, hr_name: str, job_title: str, company: str) -> bool:
+    # 1. Pull the user's specific credentials and AI context from Postgres
     profile = get_user_profile(user_id)
-    if not profile: return False
-    
-    with get_db() as conn:
-        user_row = conn.execute("SELECT full_name FROM users WHERE id=?", (user_id,)).fetchone()
-        full_name = user_row["full_name"] if user_row else "Candidate"
-        
-    sender = profile.get("sender_email")
-    password = profile.get("app_password")  # 🌟 SaaS: Pulls secure password from DB!
-    
-    if not sender or not password or not to_email or "@" not in to_email:
-        logger.error("Missing sender credentials or invalid HR email.")
+    if not profile or not profile.get("sender_email") or not profile.get("app_password"):
+        log_activity(user_id, "error", f"Cannot send email to {company}. Missing Gmail App Password in Dashboard.")
         return False
 
-    body = generate_ai_email_body(profile, full_name, hr_name, job_title, company)
-
+    sender_email = profile["sender_email"]
+    app_password = profile["app_password"]
+    
+    # 🌟 THE FIX: Safely pull directly from the dedicated DB columns, with fallbacks
+    achievements = profile.get("key_achievements") or "I am a highly driven professional with a track record of delivering impactful results."
+    fit = profile.get("why_good_fit") or "My technical background and passion for innovation make me a perfect fit for this team."
+    
+    # 2. Generate the hyper-personalized email with Groq
     try:
-        msg = EmailMessage()
-        msg['From'] = sender
-        msg['To'] = to_email
-        msg['Subject'] = f"Application follow-up: {job_title} role at {company}" 
-        msg.set_content(body)
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.7, groq_api_key=os.getenv("GROQ_API_KEY"))
+        prompt = PromptTemplate.from_template("""
+        You are an expert copywriter writing a cold outreach email for a candidate to a recruiter. 
         
-        server = smtplib.SMTP('smtp.gmail.com', 587)
+        RECRUITER NAME: {hr_name}
+        COMPANY: {company}
+        ROLE APPLIED FOR: {job_title}
+        
+        CANDIDATE'S KEY ACHIEVEMENTS: {achievements}
+        WHY THEY ARE A GOOD FIT: {fit}
+        
+        Write a short, punchy, professional cold email. 
+        Do NOT use placeholders like [Your Name] or [Link]. Just write the body of the email.
+        Keep it strictly under 5 sentences. Be highly engaging and confident.
+        """)
+        chain = prompt | llm
+        body = chain.invoke({
+            "hr_name": hr_name, "company": company, "job_title": job_title, 
+            "achievements": achievements, "fit": fit
+        }).content.strip()
+
+        subject = f"Application follow-up: {job_title} - Quick Introduction"
+
+        # 3. Dispatch via Gmail SMTP
+        # 3. Dispatch via Gmail SMTP (Cloud-Safe Port 587)
+        msg = EmailMessage()
+        msg.set_content(body)
+        msg["Subject"] = subject
+        msg["From"] = sender_email
+        msg["To"] = to_email
+
+        # Use Port 587 (TLS) which bypasses cloud IPv6 blocks
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.ehlo()
         server.starttls()
-        server.login(sender, password)
+        server.login(sender_email, app_password)
         server.send_message(msg)
         server.quit()
-        logger.info(f"📧 SaaS Email sent successfully to {to_email} on behalf of {sender}")
+        
+        log_activity(user_id, "message_sent", f"Sent AI-crafted email to {hr_name} at {company}")
         return True
+
     except Exception as e:
-        logger.error(f"Email Sending Error: {e}")
+        logger.error(f"Failed to send email: {e}")
+        # If the Gmail password is wrong or missing, it will safely log this error to your dashboard now
+        log_activity(user_id, "error", f"Email failed to send to {company}. Check Gmail App Password.")
         return False
 
 def execute_outreach_flow(user_id: int, job_id: str, company: str, job_title: str, target_hr_name: str = None, target_hr_url: str = None):

@@ -178,14 +178,14 @@
     // ── CONTENT HOOK (notifies backend after job apply) ───────────────
 
     // 🌟 Added hr_name and hr_url parameters
-    async function _notifyBackend(status, hr_name = null, hr_url = null) {
+    // 🌟 Added hr_name, hr_url, and match_score parameters
+    async function _notifyBackend(status, hr_name = null, hr_url = null, match_score = 0) {
         try {
             const headers = await window.getAuthHeader();
             if (!headers["Authorization"]) return;
 
             let jobId = "unknown";
             
-            // 🌟 THE FIX: Reliably capture BOTH types of LinkedIn URLs!
             const urlMatch = window.location.href.match(/\/jobs\/view\/(\d+)/) || 
                              window.location.href.match(/currentJobId=(\d+)/);
                              
@@ -205,8 +205,6 @@
             const cleanUrl = jobId.startsWith("auto_") 
                 ? window.location.href.split("?")[0] 
                 : "https://www.linkedin.com/jobs/view/" + jobId + "/";
-
-            // ... (keep the rest of your _notifyBackend title/company extraction exactly as is)
 
             const titleEl = document.querySelector(
                 "h1.t-24, h2.t-24, " +
@@ -248,11 +246,12 @@
                     title:   title,
                     company: company,
                     status:  status,
-                    hr_name: hr_name, // 🌟 Passing the targeted HR name
-                    hr_url:  hr_url   // 🌟 Passing the targeted HR URL
+                    hr_name: hr_name, 
+                    hr_url:  hr_url,
+                    match_score: match_score // 🌟 Passing the match score to backend
                 }),
             });
-            console.log("[ContentHook] Stored:", status, "—", title, "@", company, "| HR:", hr_name);
+            console.log("[ContentHook] Stored:", status, "—", title, "@", company, "| HR:", hr_name, "| Match:", match_score);
         } catch (e) {
             console.debug("[ContentHook] notify failed:", e.message);
         }
@@ -262,8 +261,8 @@
     chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
 
         if (request.action === "job_completed_notify") {
-            // 🌟 Forward the HR data to the backend
-            _notifyBackend(request.status, request.hr_name, request.hr_url);
+            // 🌟 Forward the HR and Match data to the backend
+            _notifyBackend(request.status, request.hr_name, request.hr_url, request.match_score);
             sendResponse({ status: "ok" });
             return false;
         }
@@ -279,4 +278,4 @@
         return false;
     });
 
-})(); // end IIFE
+})(); // end IIFE // end IIFE

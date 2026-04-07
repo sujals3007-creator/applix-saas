@@ -67,10 +67,14 @@ function setAgentStatus(status) {
 // ─────────────────────────────────────────────────────────────────
 // UTILITIES
 // ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────────────────────────
 let _jobStatus = "idle"; 
 let _campaignRunning = false;
 let _foundHrName = null;
 let _foundHrUrl = null;
+let _currentMatchScore = 0; // 🌟 NEW
 
 const humanDelay = (min = 1500, max = 3000) => new Promise(r => setTimeout(r, Math.floor(Math.random() * (max - min + 1)) + min));
 
@@ -366,23 +370,53 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
     }
     // 🌟 THE NEW RESUME FIX: Smart click logic
  const resumeLabel = document.querySelector('label[for*="urn:li:fsd_profileDocument"]');
- const resumeInput = document.querySelector('input[type="radio"][value*="urn:li:fsd_profileDocument"]');
+ // 🌟 THE BULLETPROOF RESUME FIX
+    const resumeInput = document.querySelector('input[type="radio"][value*="urn:li:fsd_profileDocument"]');
 
- if (resumeInput) {
-     if (resumeInput.checked || resumeInput.getAttribute('aria-checked') === 'true') {
-         agentLog("⏭️ Resume is already selected. Skipping click.", "#cbd5e1");
-     } else {
-         agentLog("✅ Selecting the saved resume...", "#10b981");
-         if (resumeLabel) { resumeLabel.click(); } 
-         else { resumeInput.click(); }
-         await humanDelay(500, 800);
-     }
- }
+    if (resumeInput) {
+        // Check the input itself AND its parent container for LinkedIn's "selected" visual state
+        const container = resumeInput.closest('.ui-attachment, .artdeco-card') || resumeInput.parentElement;
+        const isSelected = resumeInput.checked || 
+                           resumeInput.getAttribute('aria-checked') === 'true' || 
+                           (container && container.classList.contains('selected'));
+
+        if (isSelected) {
+            agentLog("⏭️ Resume is already selected. Skipping click.", "#cbd5e1");
+        } else {
+            agentLog("✅ Selecting the saved resume...", "#10b981");
+            const preciseLabel = document.querySelector(`label[for="${resumeInput.id}"]`);
+            if (preciseLabel) { preciseLabel.click(); } 
+            else { resumeInput.click(); }
+            await humanDelay(500, 800);
+        }
+    }
+
+
+    // 🌟 THE BULLETPROOF RESUME FIX 🌟
+    // Check if ANY resume is checked. If yes, leave it alone. If no, click the first one.
+    const resumeInputs = deepQuerySelectorAll("input[type='radio'][value*='urn:li:fsd_profileDocument']", modal);
+    if (resumeInputs.length > 0) {
+        const anyChecked = resumeInputs.some(r => r.checked || r.getAttribute('aria-checked') === 'true' || (r.closest('.ui-attachment') && r.closest('.ui-attachment').classList.contains('selected')));
+        
+        if (anyChecked) {
+            agentLog("⏭️ Resume is already ticked. Moving forward.", "#cbd5e1");
+        } else {
+            agentLog("✅ Resume not ticked. Ticking the default resume...", "#10b981");
+            const firstResume = resumeInputs[0];
+            const label = document.querySelector(`label[for="${firstResume.id}"]`);
+            if (label) label.click();
+            else firstResume.click();
+            await humanDelay(500, 800);
+        }
+    }
+
+
 
 
 
 
     const errors = deepQuerySelectorAll(".artdeco-inline-feedback--error, [data-test-form-element-error-message]", modal).filter(e => e.getBoundingClientRect().width > 0);
+
     if (errors.length) {
         agentLog("❌ Hard Validation Error detected on page.", "#ef4444");
         await _abortCurrentApplication();
@@ -416,7 +450,25 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
         if (!inputId) continue;
         const inp = allInputs.find(i => i.id === inputId);
         if (!inp || inp.disabled || inp.type === "hidden" || inp.type === "file") continue;
+        // 🛑 THE FIX: Blind the AI to the Resume and Cover Letter buttons!
+        // If we don't hide these, the AI tries to "answer" them and toggles them off.
+        if (inp.value && (inp.value.includes("urn:li:fsd_profileDocument") || inp.value.includes("urn:li:fsd_coverLetterDocument"))) {
+            continue;
+        }
         if ((inp.type === "radio" || inp.type === "checkbox") && inp.closest("fieldset")) continue;
+        // 🛑 THE AI BLINDER: Hide Resume & Cover Letter from Groq
+        // If we don't hide these, the AI tries to "answer" them and toggles them off.
+        // 🛑 THE AGGRESSIVE AI BLINDER: Hide Resume & Cover Letter completely
+        const valStr = (inp.value || "").toLowerCase();
+        const parentHtml = (inp.closest('.jobs-easy-apply-form-section__grouping') || inp.parentElement).innerHTML.toLowerCase();
+        
+        if (valStr.includes("urn:li:fsd_profiledocument") || 
+            valStr.includes("coverletter") || 
+            parentHtml.includes("resume") || 
+            parentHtml.includes("cv") || 
+            parentHtml.includes("cover letter")) {
+            continue; // Force the AI to ignore this entirely
+        }
 
         let txt = (label.innerText || "").replace(/Required/ig, "").replace(/\*/g, "").trim();
         if (txt.length) { 
@@ -452,22 +504,27 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
         const headers = { "Content-Type": "application/json" };
         if (store.saas_jwt_token) headers["Authorization"] = "Bearer " + store.saas_jwt_token;
 
+        // 🌟 NEW: Scrape Job Description for ATS Match
+        const jdEl = document.querySelector("#job-details, .jobs-description-content__text");
+        const jdText = jdEl ? jdEl.innerText.substring(0, 3000) : "";
+
         // 🌟 THE FIX: Try up to 3 times with a 5-second cooldown if Groq rate-limits us!
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
                 const resp = await fetch("https://ai-job-agent-backend-qmq1.onrender.com/api/answer-questions", {
-                    method: "POST", headers: headers, body: JSON.stringify({ questions }),
+                    method: "POST", headers: headers, 
+                    body: JSON.stringify({ questions: questions, job_description: jdText }), // 🌟 ADDED JD
                 });
                 result = await resp.json();
                 
                 if (result.status === "success") {
                     apiSuccess = true;
+                    _currentMatchScore = result.match_score || 0; // 🌟 SAVED SCORE
+                    agentLog(`🎯 AI ATS Match Score: ${_currentMatchScore}%`, "#10b981");
                     break; // Success! Exit the retry loop.
                 } else {
                     agentLog(`⚠️ API Error (Attempt ${attempt}/3): ${result.message}`, "#fbbf24");
-                    // If the user forgot to upload a resume, don't bother retrying
                     if (result.message && result.message.toLowerCase().includes("resume")) break; 
-                    
                     agentLog("⏳ Cooling down for 5 seconds before retrying...", "#cbd5e1");
                     await humanDelay(4500, 5500); 
                 }
@@ -752,6 +809,9 @@ function harvestAndQueueJobs() {
 // ─────────────────────────────────────────────────────────────────
 // MESSAGE LISTENER
 // ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
+// MESSAGE LISTENER
+// ─────────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     // 1. The Auto-SaaS Trigger (Handles BOTH Auto & Manual Jobs now!)
@@ -765,7 +825,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     action: "job_completed", 
                     status: "success",
                     hr_name: _foundHrName,
-                    hr_url: _foundHrUrl
+                    hr_url: _foundHrUrl,
+                    match_score: _currentMatchScore // 🌟 ADDED MATCH SCORE
                 });
             } else {
                 agentLog(`⏭️ Job bypassed. Status: ${_jobStatus}`, "#fbbf24");

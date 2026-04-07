@@ -3,214 +3,192 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI Job Agent — Dashboard</title>
+<title>Applix — AI Job Agent</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f4f6f9;color:#222;font-size:14px}
-header{background:#0a66c2;color:#fff;padding:14px 28px;display:flex;align-items:center;justify-content:space-between}
-header h1{font-size:18px;font-weight:600}
-header span{font-size:13px;opacity:.85}
-#logoutLink{color:#fff;font-size:13px;cursor:pointer;text-decoration:underline}
-.container{max-width:1100px;margin:24px auto;padding:0 20px}
-.tab-menu { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
-.tab-btn { background: none; border: none; padding: 10px 20px; font-size: 15px; font-weight: 600; color: #666; cursor: pointer; border-radius: 5px; }
-.tab-btn.active { background: #0a66c2; color: white; }
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
-.stat-card{background:#fff;border-radius:10px;padding:16px 18px;border:1px solid #e2e8f0}
-.stat-card .label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
-.stat-card .value{font-size:28px;font-weight:600;color:#0a66c2}
-.agent-bar{background:#fff;border-radius:10px;padding:12px 18px;margin-bottom:20px; display:flex;align-items:center;gap:12px;border:1px solid #e2e8f0}
-.dot{width:10px;height:10px;border-radius:50%;background:#ccc;flex-shrink:0}
-.dot.running{background:#16a34a;animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.agent-bar .info{flex:1;font-size:13px;color:#444}
-.grid2{display:grid;grid-template-columns:1fr 360px;gap:18px}
-.card{background:#fff;border-radius:10px;padding:18px;border:1px solid #e2e8f0}
-.card h2{font-size:14px;font-weight:600;margin-bottom:14px;color:#333}
-table{width:100%;border-collapse:collapse}
-th{text-align:left;font-size:11px;text-transform:uppercase;color:#888; padding:6px 10px;border-bottom:1px solid #eee;}
-td{padding:9px 10px;border-bottom:1px solid #f5f5f5;font-size:13px;vertical-align:top}
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}
-.badge.applied{background:#dcfce7;color:#166534}
-.badge.skipped{background:#fef9c3;color:#854d0e}
-.badge.error  {background:#fee2e2;color:#991b1b}
-.log-feed{max-height:480px;overflow-y:auto}
-.log-item{padding:8px 0;border-bottom:1px solid #f5f5f5;display:flex;gap:8px;}
-.form-input { width: 100%; padding: 10px; margin-top: 5px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 5px; }
-.save-btn { background: #16a34a; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
-.hidden{display:none}
-#loginScreen{max-width:380px;margin:80px auto;background:#fff;padding:32px; border-radius:12px;border:1px solid #e2e8f0}
-#loginScreen input{display:block;width:100%;padding:9px 12px;margin-bottom:12px; border:1px solid #ccc;border-radius:6px;font-size:14px}
-#loginScreen button{width:100%;padding:10px;border:none;border-radius:6px; background:#0a66c2;color:#fff;font-weight:600;cursor:pointer;}
+    :root { --primary: #0a66c2; --bg: #f8fafc; --surface: #ffffff; --text: #0f172a; --text-light: #64748b; --border: #e2e8f0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+    body { background-color: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+    #loginScreen { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .login-box { background: var(--surface); padding: 40px; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); width: 100%; max-width: 400px; border: 1px solid var(--border); }
+    .login-box input { width: 100%; padding: 12px; margin-bottom: 16px; border: 1px solid var(--border); border-radius: 8px; outline: none; transition: border 0.2s; }
+    .login-box input:focus { border-color: var(--primary); }
+    .btn { width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+    .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 24px 16px; }
+    .logo { font-size: 20px; font-weight: 700; color: var(--primary); margin-bottom: 40px; padding-left: 12px; display: flex; align-items: center; gap: 8px; }
+    .nav-item { padding: 12px; margin-bottom: 8px; border-radius: 8px; cursor: pointer; font-weight: 500; color: var(--text-light); transition: all 0.2s; }
+    .nav-item:hover { background: var(--bg); color: var(--text); }
+    .nav-item.active { background: #eff6ff; color: var(--primary); font-weight: 600; }
+    .main-content { flex: 1; overflow-y: auto; padding: 40px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); }
+    .card-title { font-size: 16px; font-weight: 600; margin-bottom: 20px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; }
+    .form-input { padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; outline: none; color: var(--text); background: #fff; }
+    .form-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px #eff6ff; }
+    .upload-zone { border: 2px dashed #cbd5e1; border-radius: 12px; padding: 32px; text-align: center; background: #f8fafc; cursor: pointer; transition: all 0.2s; }
+    .upload-zone:hover { border-color: var(--primary); background: #eff6ff; }
+    .toggle-wrap { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; background: #f0fdf4; padding: 12px 16px; border-radius: 8px; border: 1px solid #bbf7d0; }
+    .hidden { display: none !important; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .stat-box { padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+    .stat-value { font-size: 32px; font-weight: 700; color: var(--primary); margin-top: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: 11px; text-transform: uppercase; color: #888; padding: 12px 10px; border-bottom: 1px solid #eee; }
+    td { padding: 12px 10px; border-bottom: 1px solid #f5f5f5; font-size: 13px; }
+    .match-badge { font-weight: bold; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
 </style>
 </head>
 <body>
 
 <div id="loginScreen">
-  <h2 style="color:#0a66c2; margin-bottom:20px;">AI Job Agent</h2>
-  <input type="email" id="dEmail" placeholder="Email"/>
-  <input type="password" id="dPw" placeholder="Password"/>
-  <button onclick="dashLogin()">Login</button>
-  <div id="loginErr" style="color:red;font-size:13px;margin-top:8px;text-align:center"></div>
+  <div class="login-box">
+    <h2 style="color:var(--primary); margin-bottom:8px; font-size:24px;">Applix</h2>
+    <p style="color:var(--text-light); margin-bottom:24px;">Log in to your AI Job Agent dashboard.</p>
+    <input type="email" id="dEmail" placeholder="Work Email"/>
+    <input type="password" id="dPw" placeholder="Password"/>
+    <button class="btn" onclick="dashLogin()">Sign In</button>
+    <div id="loginErr" style="color:#ef4444;font-size:13px;margin-top:12px;text-align:center"></div>
+  </div>
 </div>
 
-<div id="mainApp" class="hidden">
-  <header>
-    <h1>AI Job Agent</h1>
-    <div style="display:flex;align-items:center;gap:16px">
-      <span id="headerName"></span>
-      <span id="logoutLink" onclick="dashLogout()">Logout</span>
-    </div>
-  </header>
-
-  <div class="container">
-    <div class="tab-menu">
-        <button id="tabDashboard" class="tab-btn active" onclick="switchTab('dashboard')">Live Dashboard</button>
-        <button id="tabProfile" class="tab-btn" onclick="switchTab('profile')">Build AI Brain (Profile)</button>
+<div id="mainApp" class="hidden" style="display:flex; width:100%;">
+    <div class="sidebar">
+        <div class="logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path><path d="M12 12 2.1 7.1"></path><path d="M12 12l9.9 4.9"></path></svg>
+            Applix SaaS
+        </div>
+        <div class="nav-item active" id="tabDashboard" onclick="switchTab('dashboard')">Live Telemetry</div>
+        <div class="nav-item" id="tabProfile" onclick="switchTab('profile')">AI Master Profile</div>
+        <div style="flex:1"></div>
+        <div class="nav-item" style="color:#ef4444;" onclick="dashLogout()">Logout</div>
     </div>
 
-    <div id="viewDashboard">
-        <div class="stats">
-          <div class="stat-card"><div class="label">Total applied</div><div class="value" id="sTotalApplied">—</div></div>
-          <div class="stat-card"><div class="label">Applied today</div><div class="value" id="sAppliedToday">—</div></div>
-          <div class="stat-card"><div class="label">HR contacts</div><div class="value" id="sHrFound">—</div></div>
-          <div class="stat-card"><div class="label">Messages sent</div><div class="value" id="sMessages">—</div></div>
-          <div class="stat-card"><div class="label">Jobs queued</div><div class="value" id="sQueued">—</div></div>
-        </div>
-
-        <div class="agent-bar">
-          <div class="dot" id="agentDot"></div>
-          <div class="info" id="agentInfo">Checking agent status...</div>
-        </div>
-
-        <div class="grid2">
-          <div class="card">
-            <h2>Applied Jobs</h2>
-            <div style="overflow-x:auto">
-              <table>
-                <thead><tr><th>Role</th><th>Company</th><th>Status</th><th>Time</th></tr></thead>
-                <tbody id="jobsTable"><tr><td colspan="4" style="color:#aaa;text-align:center;padding:24px">Loading...</td></tr></tbody>
-              </table>
-            </div>
-          </div>
-          <div class="card">
-            <h2>Activity Log</h2>
-            <div class="log-feed" id="logFeed"><div style="color:#aaa;text-align:center;padding:24px">Loading...</div></div>
-          </div>
-        </div>
-    </div>
-
-    <div id="viewProfile" class="hidden card">
-        <h2>Configure Your AI Brain</h2>
-        
-        <div style="background: #e0f2fe; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #bae6fd;">
-            <h3 style="margin-bottom: 15px; color:#0369a1;">Outreach Settings (Required for Automated HR Emails)</h3>
-            <div class="form-grid">
-                <div>
-                    <label><strong>Your Gmail Address</strong></label>
-                    <input type="email" id="outreachEmail" class="form-input" placeholder="you@gmail.com">
-                </div>
-                <div>
-                    <label><strong>Gmail 16-Digit App Password</strong></label>
-                    <input type="password" id="outreachPass" class="form-input" placeholder="abcd efgh ijkl mnop">
-                </div>
+    <div class="main-content">
+        <div class="header">
+            <h1 id="pageTitle">Live Telemetry</h1>
+            <div style="display:flex; align-items:center; gap:12px;">
+                <span id="agentDot" style="width:10px; height:10px; border-radius:50%; background:#ccc;"></span>
+                <span id="agentInfo" style="font-weight:500; font-size:14px;">Agent Offline</span>
             </div>
         </div>
 
-        <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 2px dashed #94a3b8;">
-            <label><strong>Upload Resume (PDF) to Auto-Fill Data</strong></label><br>
-            <input type="file" id="dashResumeFile" accept="application/pdf" style="margin-top: 10px;">
-            <button id="dashUploadBtn" class="save-btn" style="background:#0a66c2; margin-top:10px;">Parse with AI Brain</button>
-            <p id="uploadStatusMsg" style="margin-top: 10px; font-weight: bold;"></p>
-        </div>
-
-        <div id="dynamicFormContainer" class="hidden" style="border-top: 2px solid #e2e8f0; padding-top:20px;">
-            <h3 style="margin-bottom: 15px; color:#0a66c2;">Review & Edit Extracted Data</h3>
-            <p style="color:#ef4444; font-weight:bold; margin-bottom:15px;" id="validationWarning"></p>
+        <div id="viewDashboard">
+            <div class="stats-grid">
+                <div class="stat-box"><div class="form-group"><label>Total Applied</label><div class="stat-value" id="sTotalApplied">—</div></div></div>
+                <div class="stat-box"><div class="form-group"><label>Applied Today</label><div class="stat-value" id="sAppliedToday">—</div></div></div>
+                <div class="stat-box"><div class="form-group"><label>HR Contacts Found</label><div class="stat-value" id="sHrFound">—</div></div></div>
+                <div class="stat-box"><div class="form-group"><label>Emails Sent</label><div class="stat-value" id="sMessages">—</div></div></div>
+            </div>
             
-            <div class="form-grid" id="masterFormGrid"></div>
+            <div style="display:grid; grid-template-columns: 1fr 350px; gap: 24px;">
+                <div class="card">
+                    <h2 class="card-title">Recent Applications</h2>
+                    <div style="overflow-x:auto">
+                        <table>
+                            <thead><tr><th>Role</th><th>Company</th><th>ATS Match</th><th>Date</th></tr></thead>
+                            <tbody id="jobsTable"><tr><td colspan="4" style="color:#aaa;">Loading telemetry...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2 class="card-title">Activity Log</h2>
+                    <div id="logFeed" style="max-height: 400px; overflow-y: auto; font-size: 12px; color: var(--text-light);">Loading...</div>
+                </div>
+            </div>
+        </div>
 
-            <button id="saveProfileBtn" class="save-btn" style="margin-top: 20px;">Save Profile & Initialize AI</button>
-            <p id="statusMsg" style="text-align: center; margin-top: 15px; font-weight: bold;"></p>
+        <div id="viewProfile" class="hidden">
+            <div class="card">
+                <h2 class="card-title">1. Outreach Configuration</h2>
+                <div class="grid-2">
+                    <div class="form-group"><label>Gmail Address</label><input type="email" id="outreachEmail" class="form-input" placeholder="you@gmail.com"></div>
+                    <div class="form-group"><label>16-Digit App Password</label><input type="password" id="outreachPass" class="form-input" placeholder="••••••••••••••••"></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2 class="card-title">2. AI Context Upload</h2>
+                <div class="upload-zone" onclick="document.getElementById('dashResumeFile').click()">
+                    <input type="file" id="dashResumeFile" accept="application/pdf" style="display:none;" onchange="handleFileSelect()">
+                    <svg style="margin:0 auto 12px; color:var(--primary);" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    <p style="font-weight:600; color:var(--text); font-size:16px;">Click to upload your PDF Resume</p>
+                    <p style="color:var(--text-light); margin-top:4px;">Our AI will automatically build your Universal Master Profile.</p>
+                </div>
+                <p id="uploadStatusMsg" style="margin-top: 16px; font-weight: 600; text-align: center;"></p>
+            </div>
+
+            <div id="dynamicFormContainer" class="hidden">
+                <div class="toggle-wrap">
+                    <input type="checkbox" id="rememberMe" checked style="width:16px; height:16px; cursor:pointer;">
+                    <label for="rememberMe" style="font-weight:600; color:#166534; cursor:pointer;">Lock Profile & Remember Details for all future applications</label>
+                </div>
+                
+                <div id="categorizedFormGrid"></div>
+
+                <button id="saveProfileBtn" class="btn" style="margin-top: 20px; font-size: 16px; padding: 16px; background:#16a34a;">Securely Save Master Profile</button>
+                <p id="statusMsg" style="text-align: center; margin-top: 15px; font-weight: 600;"></p>
+            </div>
         </div>
     </div>
-  </div>
 </div>
 
 <script>
 const API = "https://ai-job-agent-backend-qmq1.onrender.com";
 let authToken = localStorage.getItem("dash_token") || "";
-let refreshTimer = null;
 
-// FIX 3: Added LinkedIn and Prev Experience to the Master Keys
-const masterKeys = {
-    "q_name": "Full Name", "q_email": "Email", "q_phone": "Phone", "q_location": "Current Location", "q_relocate": "Willing to Relocate (Yes/No)",
-    "q_linkedin": "LinkedIn Profile URL", "q_yoe": "Total Years Experience (Number)", "q_summary": "Summary / Bio", "q_current_role": "Current Job Title", 
-    "q_prev_company": "Most Recent Company", "q_prev_exp": "Previous Work Experience Details", "q_langs": "Programming Languages", 
-    "q_python": "Python Experience (Yes/No/Years)", "q_ml": "Machine Learning Experience", "q_dl": "Deep Learning Exp", "q_nlp": "NLP Experience", 
-    "q_cv": "Computer Vision Exp", "q_llm": "LLM / Generative AI Exp", "q_frameworks": "Frameworks (React, etc)", "q_api": "API Development (Yes/No)", 
-    "q_cloud": "Cloud (AWS/GCP/Azure)", "q_devops": "DevOps / Docker", "q_project": "Best Project Name", "q_deployed": "Deployed Projects (Yes/No)", 
-    "q_github": "GitHub Link", "q_portfolio": "Portfolio Link", "q_degree": "Highest Degree", "q_university": "University", "q_grad_year": "Graduation Year",
-    "q_salary": "Expected CTC / Salary", "q_notice": "Notice Period (Days)", "q_immediate": "Can Join Immediately (Yes/No)",
-    "q_work_auth": "Authorized to Work in Target Country?", "q_visa": "Require Visa Sponsorship?"
+// 🌟 THE UNIVERSAL MASTER FORM (Covers SDE, Data, AI, and DevOps)
+const formCategories = {
+    "Personal & Contact": { "q_name": "Full Name", "q_email": "Email", "q_phone": "Phone", "q_location": "Current Location", "q_linkedin": "LinkedIn URL", "q_portfolio": "Portfolio URL", "q_github": "GitHub URL" },
+    "Experience & Role": { "q_current_role": "Current Job Title", "q_prev_company": "Most Recent Company", "q_yoe": "Total Years Experience", "q_prev_exp": "Work Experience Details", "q_summary": "Professional Summary" },
+    "Software Engineering (SDE)": { "q_frontend": "Frontend (React/Angular/Vue)", "q_backend": "Backend (Node/Java/Python)", "q_db": "Databases (SQL/NoSQL)", "q_mobile": "Mobile (iOS/Android)", "q_api": "API Development (REST/GraphQL)", "q_testing": "Testing/QA" },
+    "AI, ML & Data Science": { "q_python": "Python / R Exp", "q_ml": "Machine Learning Exp", "q_dl": "Deep Learning / PyTorch", "q_nlp": "NLP / Text Processing", "q_cv": "Computer Vision", "q_llm": "LLMs / Generative AI", "q_data_viz": "Data Visualization (Tableau/PowerBI)" },
+    "DevOps & Cloud": { "q_cloud": "Cloud Platforms (AWS/GCP/Azure)", "q_docker": "Docker / Kubernetes", "q_cicd": "CI/CD Pipelines", "q_linux": "Linux / System Admin" },
+    "Logistics & Edu": { "q_degree": "Highest Degree", "q_university": "University", "q_grad_year": "Graduation Year", "q_salary": "Expected CTC", "q_notice": "Notice Period (Days)", "q_immediate": "Join Immediately (Yes/No)", "q_work_auth": "Work Authorization", "q_visa": "Require Visa?" }
 };
+
+const masterKeys = Object.assign({}, ...Object.values(formCategories));
 
 function switchTab(tabName) {
     document.getElementById('viewDashboard').classList.add('hidden');
     document.getElementById('viewProfile').classList.add('hidden');
     document.getElementById('tabDashboard').classList.remove('active');
     document.getElementById('tabProfile').classList.remove('active');
-    if (tabName === 'dashboard') {
-        document.getElementById('viewDashboard').classList.remove('hidden');
-        document.getElementById('tabDashboard').classList.add('active');
-    } else {
-        document.getElementById('viewProfile').classList.remove('hidden');
-        document.getElementById('tabProfile').classList.add('active');
-    }
+    document.getElementById('pageTitle').innerText = tabName === 'dashboard' ? 'Live Telemetry' : 'AI Master Profile';
+    
+    if (tabName === 'dashboard') { document.getElementById('viewDashboard').classList.remove('hidden'); document.getElementById('tabDashboard').classList.add('active'); } 
+    else { document.getElementById('viewProfile').classList.remove('hidden'); document.getElementById('tabProfile').classList.add('active'); }
 }
 
 async function dashLogin() {
     const email = document.getElementById("dEmail").value.trim();
     const pw = document.getElementById("dPw").value;
-    const resp = await fetch(`${API}/api/auth/login`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password: pw }),
-    });
+    const resp = await fetch(`${API}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password: pw }) });
     const data = await resp.json();
     if (data.token) {
-        authToken = data.token;
-        localStorage.setItem("dash_token", authToken);
-        localStorage.setItem("dash_user", data.full_name || data.email);
-        showDashboard();
+        authToken = data.token; localStorage.setItem("dash_token", authToken);
+        document.getElementById("loginScreen").classList.add("hidden"); document.getElementById("mainApp").classList.remove("hidden");
+        loadAll();
     } else { document.getElementById("loginErr").innerText = data.detail || "Login failed."; }
 }
 
 function dashLogout() {
-    localStorage.removeItem("dash_token"); localStorage.removeItem("dash_user");
-    authToken = ""; clearInterval(refreshTimer);
-    document.getElementById("mainApp").classList.add("hidden");
-    document.getElementById("loginScreen").classList.remove("hidden");
+    localStorage.removeItem("dash_token"); authToken = "";
+    document.getElementById("mainApp").classList.add("hidden"); document.getElementById("loginScreen").classList.remove("hidden");
 }
 
 function authHeaders() { return { "Authorization": `Bearer ${authToken}` }; }
 
-function showDashboard() {
-    document.getElementById("loginScreen").classList.add("hidden");
-    document.getElementById("mainApp").classList.remove("hidden");
-    document.getElementById("headerName").innerText = localStorage.getItem("dash_user") || "";
-    loadAll();
-    refreshTimer = setInterval(loadAll, 30000);
-}
-
-async function loadAll() { await Promise.all([loadStats(), loadJobs(), loadLogs(), loadAgentStatus()]); }
+// 🌟 RESTORED DASHBOARD LOADING FUNCTIONS
+async function loadAll() { await Promise.all([loadStats(), loadJobs(), loadLogs(), loadAgentStatus(), loadProfileData()]); }
 
 async function loadStats() {
     try {
         const r = await fetch(`${API}/api/dashboard/stats`, { headers: authHeaders() }); const d = await r.json();
         document.getElementById("sTotalApplied").innerText = d.total_applied ?? "—"; document.getElementById("sAppliedToday").innerText = d.applied_today ?? "—";
         document.getElementById("sHrFound").innerText = d.hr_found ?? "—"; document.getElementById("sMessages").innerText = d.messages_sent ?? "—";
-        document.getElementById("sQueued").innerText = d.queued_jobs ?? "—";
     } catch {}
 }
 
@@ -218,8 +196,17 @@ async function loadJobs() {
     try {
         const r = await fetch(`${API}/api/dashboard/jobs`, { headers: authHeaders() }); const d = await r.json();
         const tbody = document.getElementById("jobsTable");
-        if (!d.jobs || !d.jobs.length) { tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No apps yet.</td></tr>`; return; }
-        tbody.innerHTML = d.jobs.map(j => `<tr><td><a style="color:#0a66c2;" href="${j.job_url||'#'}" target="_blank">${j.title}</a></td><td>${j.company}</td><td><span class="badge ${j.status}">${j.status}</span></td><td style="color:#888">${new Date(j.applied_at).toLocaleDateString()}</td></tr>`).join("");
+        if (!d.jobs || !d.jobs.length) { tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;">No telemetry yet.</td></tr>`; return; }
+        tbody.innerHTML = d.jobs.map(j => {
+            const score = j.match_score || 0;
+            let color = score >= 80 ? "#16a34a" : score >= 60 ? "#ca8a04" : "#dc2626";
+            return `<tr>
+                <td><a style="color:var(--primary); font-weight:500; text-decoration:none;" href="${j.job_url||'#'}" target="_blank">${j.title}</a></td>
+                <td>${j.company}</td>
+                <td><span class="match-badge" style="color:${color}; background:${color}20;">${score}% Match</span></td>
+                <td style="color:#888">${new Date(j.applied_at).toLocaleDateString()}</td>
+            </tr>`
+        }).join("");
     } catch {}
 }
 
@@ -227,8 +214,8 @@ async function loadLogs() {
     try {
         const r = await fetch(`${API}/api/dashboard/logs`, { headers: authHeaders() }); const d = await r.json();
         const feed = document.getElementById("logFeed");
-        if (!d.logs || !d.logs.length) { feed.innerHTML = `<div style="text-align:center;">No activity yet.</div>`; return; }
-        feed.innerHTML = d.logs.map(l => `<div class="log-item"><div><div style="font-size:12px;color:#444;">${l.message}</div><div style="font-size:11px;color:#aaa;">${new Date(l.created_at).toLocaleTimeString()}</div></div></div>`).join("");
+        if (!d.logs || !d.logs.length) { feed.innerHTML = "No activity yet."; return; }
+        feed.innerHTML = d.logs.map(l => `<div style="padding:8px 0; border-bottom:1px solid #f5f5f5;"><div>${l.message}</div><div style="font-size:10px;color:#aaa;margin-top:2px;">${new Date(l.created_at).toLocaleTimeString()}</div></div>`).join("");
     } catch {}
 }
 
@@ -236,76 +223,82 @@ async function loadAgentStatus() {
     try {
         const r = await fetch(`${API}/api/agent/status`, { headers: authHeaders() }); const d = await r.json();
         const dot = document.getElementById("agentDot"); const info = document.getElementById("agentInfo");
-        if (d.scanner_running) { dot.classList.add("running"); info.innerText = "Agent is running."; } 
-        else { dot.classList.remove("running"); info.innerText = "Agent is offline."; }
+        if (d.scanner_running) { dot.style.background = "#16a34a"; info.innerText = "Agent is active & scanning."; info.style.color = "#16a34a"; } 
+        else { dot.style.background = "#ccc"; info.innerText = "Agent is offline."; info.style.color = "#64748b"; }
     } catch {}
 }
 
-document.getElementById("dashUploadBtn").addEventListener("click", async function() {
-    const fileInput = document.getElementById("dashResumeFile");
-    const statusMsg = document.getElementById("uploadStatusMsg");
-    if (!fileInput.files.length) { statusMsg.innerText = "❌ Please select a PDF file first."; statusMsg.style.color = "red"; return; }
-
-    statusMsg.innerText = "⏳ Extracting details with AI... please wait."; statusMsg.style.color = "#0a66c2";
-    const formData = new FormData(); formData.append("file", fileInput.files[0]);
-
+async function loadProfileData() {
     try {
-        const resp = await fetch(`${API}/api/parse-resume-to-form`, { method: "POST", headers: authHeaders(), body: formData });
-        const data = await resp.json();
-        
-        if (data.status === "success" && data.data) {
-            statusMsg.innerText = "✅ Resume parsed! Review the extracted data below."; statusMsg.style.color = "green";
-            const grid = document.getElementById("masterFormGrid");
-            grid.innerHTML = ""; 
-            
-            for (const [key, label] of Object.entries(masterKeys)) {
-                const val = data.data[key] || "";
-                grid.innerHTML += `
-                    <div>
-                        <label style="font-size:11px; font-weight:bold;">${label}</label>
-                        <input type="text" id="mf_${key}" data-label="${label}" value="${val}" class="form-input">
-                    </div>
-                `;
+        const resp = await fetch(`${API}/api/profile`, { headers: authHeaders() }); const data = await resp.json();
+        if (data.status === "success" && data.profile) {
+            if (data.profile.sender_email) document.getElementById("outreachEmail").value = data.profile.sender_email;
+            if (data.profile.app_password) document.getElementById("outreachPass").value = data.profile.app_password;
+            if (data.profile.master_qa_data) {
+                const savedLines = data.profile.master_qa_data.split('\n'); const savedDict = {};
+                savedLines.forEach(line => { if (line.startsWith('- ')) { const parts = line.substring(2).split(': '); if (parts.length >= 2) savedDict[parts[0].trim()] = parts.slice(1).join(': ').trim(); }});
+                buildProfessionalForm(savedDict);
             }
-            document.getElementById("dynamicFormContainer").classList.remove("hidden");
-        } else {
-            statusMsg.innerText = "❌ " + (data.message || "Failed to parse resume."); statusMsg.style.color = "red";
         }
-    } catch (err) { statusMsg.innerText = "❌ Network error. Is the Python server running?"; statusMsg.style.color = "red"; }
-});
+    } catch (e) {}
+}
+
+function buildProfessionalForm(dataDict = {}) {
+    const grid = document.getElementById("categorizedFormGrid"); grid.innerHTML = ""; 
+    for (const [categoryName, fields] of Object.entries(formCategories)) {
+        let cardHTML = `<div class="card"><h2 class="card-title">${categoryName}</h2><div class="grid-2">`;
+        for (const [key, label] of Object.entries(fields)) {
+            let val = dataDict[label] || dataDict[key] || "";
+            if (val.toLowerCase() === "not specified" || val.toLowerCase() === "data not found") val = "";
+            cardHTML += `<div class="form-group"><label>${label}</label><input type="text" id="mf_${key}" data-label="${label}" value="${val}" class="form-input"></div>`;
+        }
+        cardHTML += `</div></div>`; grid.innerHTML += cardHTML;
+    }
+    document.getElementById("dynamicFormContainer").classList.remove("hidden");
+}
+
+function handleFileSelect() { const file = document.getElementById("dashResumeFile").files[0]; if(file) processPDF(file); }
+
+async function processPDF(file) {
+    const statusMsg = document.getElementById("uploadStatusMsg");
+    statusMsg.innerText = "⏳ AI is reading your resume... this takes a few seconds."; statusMsg.style.color = "var(--primary)";
+    const formData = new FormData(); formData.append("file", file);
+    try {
+        const resp = await fetch(`${API}/api/parse-resume-to-form`, { method: "POST", headers: authHeaders(), body: formData }); const data = await resp.json();
+        if (data.status === "success" && data.data) { statusMsg.innerText = "✅ Resume Extracted! Review your Master Profile below."; statusMsg.style.color = "#16a34a"; buildProfessionalForm(data.data); } 
+        else { statusMsg.innerText = "❌ Parsing failed."; statusMsg.style.color = "#ef4444"; }
+    } catch (err) { statusMsg.innerText = "❌ Connection error."; }
+}
 
 document.getElementById("saveProfileBtn").addEventListener("click", async function() {
     const status = document.getElementById("statusMsg");
-    status.innerText = "⏳ Saving to Cloud..."; status.style.color = "#0a66c2";
+    
+    // 🌟 REMEMBER ME LOGIC
+    if (!document.getElementById("rememberMe").checked) {
+        status.innerText = "⚠️ You must check 'Lock Profile' to save your details."; status.style.color = "#ea580c"; return;
+    }
 
+    status.innerText = "⏳ Securing Profile..."; status.style.color = "var(--primary)";
     let compiledQA = "CANDIDATE Q&A DATA:\n";
     for (const key of Object.keys(masterKeys)) {
-        const inp = document.getElementById("mf_" + key);
-        if(!inp) continue;
+        const inp = document.getElementById("mf_" + key); if(!inp) continue;
         compiledQA += `- ${inp.getAttribute("data-label")}: ${inp.value.trim()}\n`;
     }
 
     const payload = {
-        target_roles: ["AI Engineer"], // Or pull dynamically
-        years_experience: parseFloat(document.getElementById("mf_q_yoe")?.value) || 0,
-        expected_ctc_inr: parseInt(document.getElementById("mf_q_salary")?.value) || 0,
         master_qa_data: compiledQA,
         sender_email: document.getElementById("outreachEmail").value.trim(),
         app_password: document.getElementById("outreachPass").value.trim()
     };
 
     try {
-        const resp = await fetch(`${API}/api/profile/save`, {
-            method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify(payload)
-        });
-        const data = await resp.json();
-        if (data.status === "success") {
-            status.innerText = "✅ Profile securely saved! Your AI Agent is fully armed."; status.style.color = "green";
-        } else { status.innerText = "❌ Error: " + data.message; status.style.color = "red"; }
-    } catch (e) { status.innerText = "❌ Connection failed."; status.style.color = "red"; }
+        const resp = await fetch(`${API}/api/profile/save`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify(payload) });
+        if ((await resp.json()).status === "success") { status.innerText = "✅ Profile securely locked and saved!"; status.style.color = "#16a34a"; loadAll(); } 
+        else { status.innerText = "❌ Failed to save."; status.style.color = "#ef4444"; }
+    } catch (e) { status.innerText = "❌ Connection failed."; }
 });
 
-if (authToken) showDashboard();
+if (authToken) { document.getElementById("loginScreen").classList.add("hidden"); document.getElementById("mainApp").classList.remove("hidden"); loadAll(); setInterval(loadAll, 30000); }
 </script>
 </body>
 </html>

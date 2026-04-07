@@ -178,6 +178,13 @@ def init_db():
             UNIQUE(user_id, job_id)
         );
         """)
+        
+        # 🌟 Safely injects the new ATS Match Score column
+        try:
+            conn.execute("ALTER TABLE applied_jobs ADD COLUMN match_score INTEGER DEFAULT 0;")
+        except Exception:
+            pass # Column already exists
+            
         print("✅ PostgreSQL Database initialised on Neon.tech!")
 
 # ──────────────────────────────────────────────────────────────────
