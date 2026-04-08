@@ -1,144 +1,20 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="UTF-8">
-<style>
-*{box-sizing:border-box}
-body{width:340px;padding:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#333;font-size:13px}
-h3{margin:0 0 10px;color:#0a66c2;font-size:15px}
-p{font-size:12px;color:#555;margin:3px 0 8px}
-button{border:none;padding:9px;border-radius:5px;cursor:pointer;width:100%;font-weight:bold;margin-bottom:7px;font-size:12px}
-#loginBtn{background:#0a66c2;color:white}
-#signupToggle{background:white;color:#0a66c2;border:1.5px solid #0a66c2}
-#logoutBtn{background:white;color:#b91c1c;border:1.5px solid #b91c1c;width:auto;padding:4px 12px;font-size:11px}
-#uploadBtn{background:#0a66c2;color:white}
-#startCampaignBtn{background:#057642;color:white}
-#saveProfileBtn{background:#7c3aed;color:white}
-#saveCookiesBtn{background:#0f7490;color:white}
-#startAutoBtn{background:#065f46;color:white}
-#validateCookiesBtn{background:white;color:#0f7490;border:1.5px solid #0f7490;padding:7px}
-input[type=text],input[type=email],input[type=password],input[type=tel],input[type=number],textarea{
-  width:100%;box-sizing:border-box;padding:7px 9px;font-size:12px;border:1px solid #ccc;
-  border-radius:5px;margin-bottom:5px;background:#fafafa}
-input:focus,textarea:focus{outline:none;border-color:#0a66c2;background:#fff}
-input[type=file]{margin:8px 0;font-size:12px}
-textarea{resize:vertical;min-height:52px}
-hr{border:0;border-top:1px solid #eee;margin:10px 0}
-label{display:block;font-size:11px;font-weight:600;color:#444;margin-bottom:2px}
-.sec{font-size:11px;font-weight:700;color:#0a66c2;margin:10px 0 5px;text-transform:uppercase;letter-spacing:.4px}
-.user-bar{background:#eff6ff;border-radius:6px;padding:7px 10px;margin-bottom:10px;
-  font-size:12px;color:#1e40af;display:flex;justify-content:space-between;align-items:center}
-#status,#cookieStatus,#authMsg{margin-top:6px;font-size:12px;font-weight:bold;text-align:center;min-height:16px}
-#cookieAge,#autoStatus{font-size:11px;color:#888;text-align:center;margin-top:2px;min-height:14px}
-</style>
+    <meta charset="UTF-8">
+    <style>
+        body { width: 300px; padding: 15px; font-family: sans-serif; }
+        h3 { color: #0a66c2; margin-top: 0; }
+        button { width: 100%; padding: 10px; margin-bottom: 10px; cursor: pointer; font-weight: bold; border: none; border-radius: 5px; }
+        #startCampaignBtn { background: #057642; color: white; }
+        #syncCookiesBtn { background: #0a66c2; color: white; }
+    </style>
 </head>
 <body>
-
-<!-- LOGIN SCREEN — visible by default; JS hides it after confirming logged in -->
-<div id="authScreen">
-  <h3>AI Job Agent</h3>
-  <label>Email</label>
-  <input type="email" id="authEmail" placeholder="you@email.com"/>
-  <label>Password</label>
-  <input type="password" id="authPassword" placeholder="Password"/>
-  <div id="nameRow" style="display:none">
-    <label>Full Name</label>
-    <input type="text" id="authName" placeholder="Your full name"/>
-  </div>
-  <button id="loginBtn">Login</button>
-  <button id="signupToggle">Create Account</button>
-  <div id="authMsg"></div>
-</div>
-
-<!-- MAIN SCREEN — hidden until login confirmed -->
-<div id="mainScreen" style="display:none">
-  <div class="user-bar">
-    <span id="userLabel">Welcome</span>
-    <button id="logoutBtn">Logout</button>
-  </div>
-
-  <div class="sec">1. Resume</div>
-  <p>Upload your PDF to initialize the AI Brain.</p>
-  <input type="file" id="resumeFile" accept="application/pdf"/>
-  <button id="uploadBtn">Upload to AI Brain</button>
-  <hr>
-
-  <div class="sec">2. LinkedIn Session Cookies</div>
-  <p>F12 → Application → Cookies → linkedin.com</p>
-  <label>li_at</label>
-  <input type="text" id="liAtInput" placeholder="Paste li_at value..." spellcheck="false"/>
-  <label>JSESSIONID</label>
-  <input type="text" id="jsessionidInput" placeholder="ajax:..." spellcheck="false"/>
-  <button id="saveCookiesBtn">Save Cookies</button>
-  <button id="validateCookiesBtn">Test if Cookies Work</button>
-  <div id="cookieStatus"></div>
-  <div id="cookieAge"></div>
-  <hr>
-
-<div class="sec">3. AI Outreach Settings</div>
-  <label>Target Roles (comma-separated)</label>
-  <input type="text" id="targetRoles" placeholder="AI Engineer, ML Engineer"/>
-  
-  <label>Your Contact Email</label>
-  <input type="email" id="senderEmail" placeholder="you@gmail.com"/>
-  
-  <label>Gmail App Password</label>
-  <input type="password" id="appPassword" placeholder="16-letter App Password"/>
-  
-  <label>Key Achievements (For AI Email)</label>
-  <textarea id="keyAchievements" placeholder="Built a RAG chatbot using Llama3, increased accuracy by 40%..."></textarea>
-  
-  <label>Why you're a good fit (For AI Email)</label>
-  <textarea id="whyGoodFit" placeholder="Deep expertise in generative AI and cloud deployment..."></textarea>
-  
-  <hr>
-  <div class="sec">4. Quick Fill Bio (For LinkedIn Forms)</div>
-  <label>Key Skills</label>
-  <textarea id="skills" placeholder="Python, PyTorch, FastAPI..."></textarea>
-  <div style="display:flex; gap:10px;">
-    <div style="flex:1">
-      <label>Years Exp</label>
-      <input type="number" id="yearsExp" value="0" min="0" step="0.5"/>
-    </div>
-    <div style="flex:1">
-      <label>Notice (Days)</label>
-      <input type="number" id="noticePeriod" value="30"/>
-    </div>
-  </div>
-  <div style="display:flex; gap:10px;">
-    <div style="flex:1">
-      <label>Current CTC</label>
-      <input type="number" id="currentCtc" value="0"/>
-    </div>
-    <div style="flex:1">
-      <label>Expected CTC</label>
-      <input type="number" id="expectedCtc" value="0"/>
-    </div>
-  </div>
-  
-  <button id="saveProfileBtn">💾 Save Master Profile</button>
-  <hr>
-
-  <div class="sec">4. Auto-Monitor</div>
-  <p>Finds and applies to new jobs automatically.</p>
-  <button id="startAutoBtn">Start Auto-Monitor</button>
-  <div id="autoStatus"></div>
-  <hr>
-
-  <div class="sec">5. Manual Campaign</div>
-  <p>Go to LinkedIn Jobs Search, scroll down, then click:</p>
-  <button id="startCampaignBtn">🚀 Start Auto-Apply Campaign</button>
-  <div id="status"></div>
-</div>
-<div style="margin-top: 15px; text-align: center;">
-    <p style="font-size: 12px; color: #666; margin-bottom: 5px;">Agent disconnected?</p>
-    <button id="syncCookiesBtn" style="width: 100%; background-color: #0a66c2; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold;">
-        🔄 Sync LinkedIn Connection
-    </button>
-    <p id="cookieStatus" style="font-size: 11px; margin-top: 5px;"></p>
-</div>
-
-<!-- MV3 CSP: external JS file only — no inline scripts allowed -->
-<script src="popup.js"></script>
+    <h3>Applix Agent</h3>
+    <button id="startCampaignBtn">🚀 Start Auto-Apply Campaign</button>
+    <button id="syncCookiesBtn">🔄 Sync LinkedIn Connection</button>
+    <div id="status" style="font-size: 12px; text-align: center;"></div>
+    <script src="popup.js"></script>
 </body>
 </html>

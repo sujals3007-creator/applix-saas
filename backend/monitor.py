@@ -95,11 +95,13 @@ async def scrape_jobs_for_role(role: str, cookies: dict) -> list[dict]:
 
                 # 🌟 THE FIX: STRICT ROLE FILTERING!
                 # Break the target role into words (e.g., "AI Engineer" -> "AI", "Engineer")
-                role_keywords = role.lower().split()
+                # 🌟 THE FIX: STRICT ROLE FILTERING!
                 title_lower = title.lower()
+                role_lower = role.lower().strip()
                 
-                # If the job title doesn't contain at least one main keyword from the target role, drop it!
-                if not any(kw in title_lower for kw in role_keywords):
+                # The job title MUST contain the exact target role phrase (e.g., "ai engineer")
+                if role_lower not in title_lower:
+                    logger.info(f"Skipping irrelevant role: {title}")
                     continue 
 
                 if not any(j["job_id"] == job_id for j in jobs):

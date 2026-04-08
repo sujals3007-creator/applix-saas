@@ -110,7 +110,6 @@ def generate_ai_email_body(profile: dict, full_name: str, hr_name: str, job_titl
     return final_email.strip()
 
 def send_email(user_id: int, to_email: str, hr_name: str, job_title: str, company: str) -> bool:
-    # 1. Pull the user's specific credentials and AI context from Postgres
     profile = get_user_profile(user_id)
     if not profile or not profile.get("sender_email") or not profile.get("app_password"):
         log_activity(user_id, "error", f"Cannot send email to {company}. Missing Gmail App Password in Dashboard.")
@@ -119,13 +118,12 @@ def send_email(user_id: int, to_email: str, hr_name: str, job_title: str, compan
     sender_email = profile["sender_email"]
     app_password = profile["app_password"]
     
-    # 🌟 THE FIX: Safely pull directly from the dedicated DB columns, with fallbacks
     achievements = profile.get("key_achievements") or "I am a highly driven professional with a track record of delivering impactful results."
     fit = profile.get("why_good_fit") or "My technical background and passion for innovation make me a perfect fit for this team."
     
-    # 2. Generate the hyper-personalized email with Groq
     try:
-        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.7, groq_api_key=os.getenv("GROQ_API_KEY"))
+        # 🌟 THE FIX: Using 8B model to save your remaining Groq credits!
+        llm = ChatGroq(model="llama3-8b-8192", temperature=0.7, groq_api_key=os.getenv("GROQ_API_KEY"))
         prompt = PromptTemplate.from_template("""
         You are an expert copywriter writing a cold outreach email for a candidate to a recruiter. 
         
@@ -148,16 +146,14 @@ def send_email(user_id: int, to_email: str, hr_name: str, job_title: str, compan
 
         subject = f"Application follow-up: {job_title} - Quick Introduction"
 
-        # 3. Dispatch via Gmail SMTP
-        # 3. Dispatch via Gmail SMTP (Cloud-Safe Port 587)
         msg = EmailMessage()
         msg.set_content(body)
         msg["Subject"] = subject
         msg["From"] = sender_email
         msg["To"] = to_email
 
-        # Use Port 587 (TLS) which bypasses cloud IPv6 blocks
-        server = smtplib.SMTP("smtp.gmail.com", 587)
+        # 🌟 THE FIX: Added a 10-second timeout. If Render blocks it, it will fail gracefully instead of hanging!
+        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=10)
         server.ehlo()
         server.starttls()
         server.login(sender_email, app_password)
@@ -169,10 +165,10 @@ def send_email(user_id: int, to_email: str, hr_name: str, job_title: str, compan
 
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
-        # If the Gmail password is wrong or missing, it will safely log this error to your dashboard now
-        log_activity(user_id, "error", f"Email failed to send to {company}. Check Gmail App Password.")
+        # 🌟 Now it will correctly log this warning to your dashboard!
+        log_activity(user_id, "error", f"Email to {company} blocked by cloud firewall. (Run locally or verify Render account).")
         return False
-
+    
 def execute_outreach_flow(user_id: int, job_id: str, company: str, job_title: str, target_hr_name: str = None, target_hr_url: str = None):
     logger.info(f"Starting SaaS outreach flow for job: {job_id} at {company}")
     

@@ -257,19 +257,62 @@ function buildProfessionalForm(dataDict = {}) {
     document.getElementById("dynamicFormContainer").classList.remove("hidden");
 }
 
-function handleFileSelect() { const file = document.getElementById("dashResumeFile").files[0]; if(file) processPDF(file); }
+// --- DRAG AND DROP MAGIC ---
+const dropZone = document.querySelector(".upload-zone");
+dropZone.addEventListener("dragover", (e) => { 
+    e.preventDefault(); 
+    dropZone.style.borderColor = "var(--primary)"; 
+    dropZone.style.background = "#eff6ff"; 
+});
+dropZone.addEventListener("dragleave", (e) => { 
+    e.preventDefault(); 
+    dropZone.style.borderColor = "#cbd5e1"; 
+    dropZone.style.background = "#f8fafc"; 
+});
+dropZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropZone.style.borderColor = "#cbd5e1"; 
+    dropZone.style.background = "#f8fafc";
+    if (e.dataTransfer.files.length) {
+        document.getElementById("dashResumeFile").files = e.dataTransfer.files;
+        handleFileSelect();
+    }
+});
+
+function handleFileSelect() { 
+    const file = document.getElementById("dashResumeFile").files[0]; 
+    if(file) processPDF(file); 
+}
 
 async function processPDF(file) {
     const statusMsg = document.getElementById("uploadStatusMsg");
-    statusMsg.innerText = "⏳ AI is reading your resume... this takes a few seconds."; statusMsg.style.color = "var(--primary)";
-    const formData = new FormData(); formData.append("file", file);
+    statusMsg.innerText = "⏳ AI is reading your resume... this takes a few seconds."; 
+    statusMsg.style.color = "var(--primary)";
+    
+    const formData = new FormData(); 
+    formData.append("file", file);
+    
     try {
-        const resp = await fetch(`${API}/api/parse-resume-to-form`, { method: "POST", headers: authHeaders(), body: formData }); const data = await resp.json();
-        if (data.status === "success" && data.data) { statusMsg.innerText = "✅ Resume Extracted! Review your Master Profile below."; statusMsg.style.color = "#16a34a"; buildProfessionalForm(data.data); } 
-        else { statusMsg.innerText = "❌ Parsing failed."; statusMsg.style.color = "#ef4444"; }
-    } catch (err) { statusMsg.innerText = "❌ Connection error."; }
+        const resp = await fetch(`${API}/api/parse-resume-to-form`, { 
+            method: "POST", 
+            headers: authHeaders(), 
+            body: formData 
+        }); 
+        const data = await resp.json();
+        
+        if (data.status === "success" && data.data) { 
+            statusMsg.innerText = "✅ Resume Extracted! Review your Master Profile below."; 
+            statusMsg.style.color = "#16a34a"; // 🌟 TYPO FIXED HERE!
+            buildProfessionalForm(data.data); 
+        } else { 
+            statusMsg.innerText = "❌ " + (data.message || "Parsing failed. Is the API Key valid?"); 
+            statusMsg.style.color = "#ef4444"; 
+        }
+    } catch (err) { 
+        statusMsg.innerText = "❌ Network connection error. Backend took too long to respond."; 
+        console.error(err);
+    }
 }
-
 document.getElementById("saveProfileBtn").addEventListener("click", async function() {
     const status = document.getElementById("statusMsg");
     
