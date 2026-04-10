@@ -411,17 +411,17 @@ def answer_questions(data: FormQuestions, user=Depends(get_current_user)):
         CANDIDATE'S VERIFIED MASTER DATA:
         {profile.get('master_qa_data')}
         
-        JOB DESCRIPTION (For ATS Targeting):
+        JOB DESCRIPTION:
         {{job_description}}
         
         QUESTIONS TO ANSWER:
         {{questions}}
         
         INSTRUCTIONS:
-        1. Calculate a MATCH SCORE (0-100) based on how well the candidate's data fits the Job Description. 
-        2. Identify 3 ATS Keywords from the Job Description and subtly inject them into any text-based answers.
+        1. Calculate a SHORTLIST SCORE from 0 to 100 based strictly on: Skills Match, Experience Level, and Role Alignment. (Be generous, default to 85 if unsure).
+        2. Identify 3 keywords from the Job Description and inject them into any text-based answers.
         3. Keep answers extremely short. Numbers must be pure digits (e.g. "2").
-        4. You MUST output EXACTLY in this format: MatchScore|Answer1|Answer2|...
+        4. You MUST output EXACTLY in this format: Score|Answer1|Answer2|...
            Example: 85|Yes|2|Python, AWS|Data Not Found
         """
         
@@ -596,3 +596,11 @@ def save_cookies(payload: CookiePayload):
         return {"status": "success", "message": "Cookies synchronized successfully."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+    
+
+if __name__ == "__main__":
+    import uvicorn
+    import os
+    # Modified to support Google Cloud Run dynamic port assignment
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)

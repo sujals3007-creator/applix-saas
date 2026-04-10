@@ -248,3 +248,13 @@ def get_user_profile(user_id: int) -> dict | None:
             "SELECT * FROM candidate_profiles WHERE user_id=%s", (user_id,)
         ).fetchone()
     return dict(row) if row else None
+
+
+def get_user_profile(user_id: int) -> dict:
+    """Fetches the user's profile data for outreach."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM candidate_profiles WHERE user_id=%s", 
+            (user_id,)
+        ).fetchone()
+        return dict(row) if row else {}
