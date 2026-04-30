@@ -1,6 +1,5 @@
 """
-outreach.py — Automated AI SaaS Outreach
-Uses Groq to generate highly personalized emails based on User Profiles.
+outreach.py — Automated AI SaaS Outreach (Apollo Integration)
 """
 import os
 import smtplib
@@ -14,192 +13,294 @@ from langchain_core.prompts import PromptTemplate
 
 logger = logging.getLogger("outreach")
 
-HUNTER_KEY = "3b370da32c7ee857d34199edc71768381070b040"
+APOLLO_KEY = os.getenv("APOLLO_KEY")  
 
 def clean_hr_name(name: str) -> str:
     return re.sub(r'[^\w\s\-\.]', '', name).strip()
 
-def find_specific_hr_hunter(target_name: str, company: str) -> dict:
-    if not HUNTER_KEY: return None
-    url = "https://api.hunter.io/v2/email-finder"
-    try:
-        resp = httpx.get(url, params={"company": company, "full_name": clean_hr_name(target_name), "api_key": HUNTER_KEY}, timeout=15)
-        if resp.status_code == 200 and resp.json().get("data", {}).get("email"):
-            return {"name": clean_hr_name(target_name), "email": resp.json()["data"]["email"]}
-    except Exception: pass
-    return None
+def clean_company_name(name: str) -> str:
+    """Strips Inc, LLC, Corp, etc. so Apollo can find the company."""
+    clean = re.sub(r'(?i)\b(Inc\.?|LLC\.?|Corp\.?|Corporation|Ltd\.?|Pvt\.?|Private|Limited)\b', '', name)
+    return clean.strip()
 
-def find_generic_hr_hunter(company: str) -> dict:
-    if not HUNTER_KEY: return None
-    url = "https://api.hunter.io/v2/domain-search"
+def find_specific_hr_apollo(target_name: str, company: str, person_id: str = None) -> dict:
+    if not APOLLO_KEY: return {}
     try:
-        resp = httpx.get(url, params={"company": company, "api_key": HUNTER_KEY, "limit": 10, "type": "personal"}, timeout=15)
-        if resp.status_code == 200 and resp.json().get("data", {}).get("emails"):
-            emails = resp.json()["data"]["emails"]
-            best = next((e for e in emails if any(k in (e.get("position") or "").lower() for k in ["hr", "recruiter", "talent", "founder", "ceo"])), emails[0])
-            name = f"{best.get('first_name', 'Hiring')} {best.get('last_name', 'Team')}".strip()
-            return {"name": name, "email": best["value"]}
-    except Exception: pass
-    return None
+        url = "https://api.apollo.io/v1/people/match"
+        headers = {
+            "Cache-Control": "no-cache",
+            "Content-Type": "application/json",
+            "X-Api-Key": APOLLO_KEY
+        }
+        
+        # 🌟 FIX 1: If we already have their exact Apollo ID, use it for a guaranteed 100% match
+        if person_id:
+            payload = {"id": person_id}
+        else:
+            parts = target_name.split()
+            first = parts[0] if parts else ""
+            last = parts[-1] if len(parts) > 1 else ""
+            clean_company = clean_company_name(company)
+            payload = {
+                "first_name": first,
+                "last_name": last,
+                "organization_name": clean_company
+            }
 
-def generate_ai_email_body(profile: dict, full_name: str, hr_name: str, job_title: str, company: str) -> str:
-    """Uses Groq to write the core paragraphs, while Python enforces a flawless professional structure."""
-    # Lowered temperature to 0.4 so the AI is more professional and less "fluffy"
-    llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.4, groq_api_key=os.getenv("GROQ_API_KEY"))
-    
-    prompt_template = """
-    Write the BODY ONLY of a cold outreach email from a candidate to a hiring manager.
-    
-    CANDIDATE INFO:
-    Skills: {skills}
-    Key Achievements: {achievements}
-    Why they are a good fit: {fit}
-    
-    JOB INFO:
-    Role: {job_title}
-    Company: {company}
-    
-    INSTRUCTIONS:
-    1. Write exactly 2 short, punchy paragraphs.
-    2. Paragraph 1: State you recently applied for the {job_title} role at {company} via LinkedIn.
-    3. Paragraph 2: Briefly highlight 1 or 2 specific skills or achievements from the CANDIDATE INFO that prove you are a great fit.
-    4. TONE: Highly professional, direct, and confident. DO NOT use cliches like "highly motivated individual" or "I wanted to take a moment".
-    5. STRICT RULE: DO NOT include greetings (e.g., "Hi Name") or sign-offs (e.g., "Thanks"). DO NOT include a subject line. Output ONLY the core text.
-    """
-    prompt = PromptTemplate.from_template(prompt_template)
-    chain = prompt | llm
-    
-    try:
-        resp = chain.invoke({
-            "skills": profile.get("skills", ""),
-            "achievements": profile.get("key_achievements", "Strong relevant background."),
-            "fit": profile.get("why_good_fit", "Highly aligned with the role requirements."),
-            "job_title": job_title, "company": company
-        })
-        ai_core_text = resp.content.strip()
+        resp = httpx.post(url, headers=headers, json=payload, timeout=15.0)
+
+        if resp.status_code == 429:
+            return {"_quota_exhausted": True}
+
+        if resp.status_code == 200:
+            person = resp.json().get("person", {})
+            email = person.get("email")
+            if email:
+                name = f"{person.get('first_name', '')} {person.get('last_name', '')}".strip()
+                return {"name": name or target_name, "email": email}
+            else:
+                logger.warning(f"Apollo matched person, but email was null. Free monthly credits may be exhausted.")
+        else:
+            logger.error(f"Apollo API rejected match: {resp.text}")
     except Exception as e:
-        logger.error(f"Groq Email Generation Failed: {e}")
-        ai_core_text = f"I recently submitted my application for the {job_title} position at {company} via LinkedIn. Given my background and technical skills, I believe I align closely with the requirements of your team and am very interested in the opportunity."
+        logger.error(f"Apollo Specific HR error: {e}")
+    return {}
 
-    # ... (Keep the Groq AI part above exactly the same) ...
+def find_generic_hr_apollo(company: str) -> dict:
+    if not APOLLO_KEY: return {}
+    try:
+        clean_company = clean_company_name(company)
+        url = "https://api.apollo.io/v1/mixed_people/api_search"
+        headers = {
+            "Cache-Control": "no-cache",
+            "Content-Type": "application/json",
+            "X-Api-Key": APOLLO_KEY
+        }
+        payload = {
+            "q_organization_name": clean_company,
+            "person_titles": ["HR", "Recruiter", "Talent Acquisition", "Human Resources", "Hiring"]
+        }
+        resp = httpx.post(url, headers=headers, json=payload, timeout=15.0)
 
-    # 🌟 THE FIX: Sanitize the HR Name to prevent "Dear None None"
-    safe_hr_name = str(hr_name).strip()
-    bad_names = ["none", "none none", "null", "unknown", "undefined", "", "none none."]
-    if safe_hr_name.lower() in bad_names:
-        safe_hr_name = "Hiring Team" # Safe, professional fallback
+        if resp.status_code == 429:
+            return {"_quota_exhausted": True}
 
-    # 🌟 PYTHON ENFORCES THE PERFECT STRUCTURE
-    phone = profile.get("phone", "")
-    email = profile.get("sender_email", "")
-    
-    # Safely format phone/email only if they exist
-    contact_info = f"{full_name}"
-    if phone: contact_info += f"\n{phone}"
-    if email: contact_info += f"\n{email}"
+        if resp.status_code == 200:
+            data = resp.json()
+            people = data.get("people", [])
+            
+            for person in people:
+                person_id = person.get("id")
+                
+                # 🌟 FIX: Apollo's new API hides last names. We now safely grab whatever is available!
+                first_name = person.get("first_name") or ""
+                last_name = person.get("last_name") or ""
+                full_name = person.get("name") or f"{first_name} {last_name}".strip() or "Hiring Team"
+                
+                if person_id:
+                    logger.info(f"Apollo found HR: {full_name}. Attempting to unlock email via ID {person_id}...")
+                    
+                    match_result = find_specific_hr_apollo(
+                        full_name, 
+                        clean_company, 
+                        person_id=person_id
+                    )
+                    
+                    if match_result and match_result.get("email"):
+                        return match_result
+            
+            logger.warning(f"Apollo Search for {clean_company} returned {len(people)} people, but could not unlock any emails.")
+        else:
+            logger.error(f"Apollo API rejected search for {clean_company}: {resp.text}")
+    except Exception as e:
+        logger.error(f"Apollo Generic HR error: {e}")
+    return {}
 
-    final_email = (
-        f"Dear {safe_hr_name},\n\n"
-        f"{ai_core_text}\n\n"
-        f"I would greatly appreciate the opportunity for a brief chat to discuss how I can add value to the team at {company}. "
-        f"Please let me know if there is a convenient time for a quick conversation..\n\n"
-        f"Best regards,\n"
-        f"{contact_info}"
-    )
-    
-    return final_email.strip()
+def _safe_hr_name(name: str) -> str:
+    if not name or name.lower() in ["none", "none none", "null", "unknown"]:
+        return "Hiring Team"
+    return name
+
 
 def send_email(user_id: int, to_email: str, hr_name: str, job_title: str, company: str) -> bool:
     profile = get_user_profile(user_id)
     if not profile or not profile.get("sender_email") or not profile.get("app_password"):
-        log_activity(user_id, "error", f"Cannot send email to {company}. Missing Gmail App Password in Dashboard.")
+        log_activity(
+            user_id, "error",
+            f"Cannot send email to {company}. Missing Gmail App Password in Dashboard."
+        )
         return False
 
     sender_email = profile["sender_email"]
-    app_password = profile["app_password"]
+    app_password  = profile["app_password"]
+    qa_data = profile.get("master_qa_data", "")
     
-    achievements = profile.get("key_achievements") or "I am a highly driven professional with a track record of delivering impactful results."
-    fit = profile.get("why_good_fit") or "My technical background and passion for innovation make me a perfect fit for this team."
-    
+    # Extract Full Name
+    name_match = re.search(r'- Full Name \[TYPE:IDENTITY\]:\s*(.+)', qa_data, re.IGNORECASE)
+    full_name = name_match.group(1).strip() if name_match else (profile.get("full_name") or sender_email.split("@")[0])
+
+    phone = profile.get("phone", "")
+    achievements = profile.get("key_achievements") or "Strong, relevant technical background."
+    fit = profile.get("why_good_fit") or "Highly aligned with the role requirements."
+    safe_name = _safe_hr_name(hr_name)
+
+    # 🌟 NEW: Extract custom URLs from the master QA blueprint
+    def extract_url(label: str) -> str:
+        match = re.search(fr'- {label} \[TYPE:IDENTITY\]:\s*(.+)', qa_data, re.IGNORECASE)
+        return match.group(1).strip() if match else None
+
+    linkedin_url = extract_url("LinkedIn URL")
+    github_url   = extract_url("GitHub URL")
+    portfolio    = extract_url("Portfolio URL")
+    resume_url   = extract_url("Resume Link")
+    projects_url = extract_url("Projects Link")
+    video_url    = extract_url("Video Explanation URL")
+
     try:
-        # 🌟 THE FIX: Using 8B model to save your remaining Groq credits!
-        llm = ChatGroq(model="llama3-8b-8192", temperature=0.7, groq_api_key=os.getenv("GROQ_API_KEY"))
+        llm = ChatGroq(
+            model="llama-3.1-8b-instant",
+            temperature=0.4,
+            groq_api_key=os.getenv("GROQ_API_KEY")
+        )
         prompt = PromptTemplate.from_template("""
-        You are an expert copywriter writing a cold outreach email for a candidate to a recruiter. 
-        
+        You are an expert copywriter writing a cold outreach email for a candidate to a recruiter.
+
         RECRUITER NAME: {hr_name}
         COMPANY: {company}
         ROLE APPLIED FOR: {job_title}
-        
+
         CANDIDATE'S KEY ACHIEVEMENTS: {achievements}
         WHY THEY ARE A GOOD FIT: {fit}
-        
-        Write a short, punchy, professional cold email. 
-        Do NOT use placeholders like [Your Name] or [Link]. Just write the body of the email.
-        Keep it strictly under 5 sentences. Be highly engaging and confident.
+
+        Write ONLY the body paragraphs of the email (no greeting, no sign-off).
+        Keep it under 5 sentences. Be professional, confident, and specific.
+        Do NOT use placeholders like [Your Name].
         """)
         chain = prompt | llm
-        body = chain.invoke({
-            "hr_name": hr_name, "company": company, "job_title": job_title, 
-            "achievements": achievements, "fit": fit
+        ai_body = chain.invoke({
+            "hr_name": safe_name,
+            "company": company,
+            "job_title": job_title,
+            "achievements": achievements,
+            "fit": fit
         }).content.strip()
 
-        subject = f"Application follow-up: {job_title} - Quick Introduction"
+        # Build the dynamic contact info block
+        contact_info = full_name
+        if phone:
+            contact_info += f"\nPhone: {phone}"
+        contact_info += f"\nEmail: {sender_email}"
+
+        # Build the dynamic links block
+        links_block = []
+        if resume_url:   links_block.append(f"Resume: {resume_url}")
+        if video_url:    links_block.append(f"Video Intro: {video_url}")
+        if portfolio:    links_block.append(f"Portfolio: {portfolio}")
+        if projects_url: links_block.append(f"Projects: {projects_url}")
+        if github_url:   links_block.append(f"GitHub: {github_url}")
+        if linkedin_url: links_block.append(f"LinkedIn: {linkedin_url}")
+
+        if links_block:
+            contact_info += "\n\nRelevant Links:\n" + "\n".join(links_block)
+
+        body = (
+            f"Dear {safe_name},\n\n"
+            f"{ai_body}\n\n"
+            f"I would appreciate the opportunity for a brief conversation about the {job_title} "
+            f"role at {company}. Please let me know if you have a convenient time.\n\n"
+            f"Best regards,\n{contact_info}"
+        )
+
+        subject = f"Application follow-up: {job_title} at {company}"
 
         msg = EmailMessage()
         msg.set_content(body)
         msg["Subject"] = subject
-        msg["From"] = sender_email
-        msg["To"] = to_email
+        msg["From"]    = sender_email
+        msg["To"]      = to_email
 
-        # 🌟 THE FIX: Added a 10-second timeout. If Render blocks it, it will fail gracefully instead of hanging!
         server = smtplib.SMTP("smtp.gmail.com", 587, timeout=10)
         server.ehlo()
         server.starttls()
         server.login(sender_email, app_password)
         server.send_message(msg)
         server.quit()
-        
-        log_activity(user_id, "message_sent", f"Sent AI-crafted email to {hr_name} at {company}")
+
+        logger.info(f"📧 SaaS Email sent successfully to {to_email} on behalf of {sender_email}")
+        log_activity(user_id, "message_sent", f"Sent AI-crafted email to {safe_name} at {company}")
         return True
 
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
-        # 🌟 Now it will correctly log this warning to your dashboard!
-        log_activity(user_id, "error", f"Email to {company} blocked by cloud firewall. (Run locally or verify Render account).")
+        log_activity(
+            user_id, "error",
+            f"Email to {company} failed: {str(e)[:120]}"
+        )
         return False
-    
-def execute_outreach_flow(user_id: int, job_id: str, company: str, job_title: str, target_hr_name: str = None, target_hr_url: str = None):
+
+
+def execute_outreach_flow(
+    user_id: int,
+    job_id: str,
+    company: str,
+    job_title: str,
+    target_hr_name: str = None,
+    target_hr_url: str = None
+):
     logger.info(f"Starting SaaS outreach flow for job: {job_id} at {company}")
-    
-    hr_data = find_specific_hr_hunter(target_hr_name, company) if target_hr_name else None
-    if not hr_data:
-        hr_data = find_generic_hr_hunter(company)
+
+    # 🌟 Safety check: Skip if Apollo Key isn't set in Google Cloud
+    if not APOLLO_KEY:
+        log_activity(user_id, "error", "Apollo API key missing. Outreach skipped.")
+        return
+
+    # 1. Try specific HR by name, fall back to domain search using APOLLO
+    hr_data = {}
+    if target_hr_name and target_hr_name.lower() not in ["unknown", "none", "hiring team", "hr"]:
+        hr_data = find_specific_hr_apollo(target_hr_name, company)
 
     if not hr_data or not hr_data.get("email"):
-        log_activity(user_id, "hr_found", f"No verified HR email found in Hunter.io for {company}. Skipped outreach.")
+        hr_data = find_generic_hr_apollo(company)
+
+    # 2. Handle Quota limits or Missing Emails
+    if hr_data and hr_data.get("_quota_exhausted"):
+        log_activity(user_id, "hr_found", f"Apollo API quota exhausted. Outreach skipped for {company}.")
         return
-        
-    hr_name, hr_email = hr_data["name"], hr_data["email"]
-    
+
+    if not hr_data or not hr_data.get("email"):
+        log_activity(
+            user_id, "hr_found",
+            f"No verified HR email found in Apollo for {company}. Skipped outreach."
+        )
+        return
+
+    # 3. Save the found contact
+    hr_name  = _safe_hr_name(hr_data["name"])
+    hr_email = hr_data["email"]
+
     with get_db() as conn:
         conn.execute(
-            """INSERT INTO hr_contacts (user_id, job_id, company, recruiter_name, recruiter_email, profile_url)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO hr_contacts
+               (user_id, job_id, company, recruiter_name, recruiter_email, profile_url)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
             (user_id, job_id, company, hr_name, hr_email, target_hr_url or "")
         )
-        
-    log_activity(user_id, "hr_found", f"Found HR via Hunter.io: {hr_name} ({hr_email})")
-    
-    # 🌟 Passes user_id to pull correct credentials
+
+    log_activity(user_id, "hr_found", f"Found HR via Apollo: {hr_name} ({hr_email})")
+
+    # 4. Send the Email
     email_success = send_email(user_id, hr_email, hr_name, job_title, company)
-    
+
     with get_db() as conn:
         conn.execute(
-            """INSERT INTO outreach_logs (user_id, job_id, recruiter_name, channel, status)
-               VALUES (?, ?, ?, 'email', ?)""",
+            """INSERT INTO outreach_logs
+               (user_id, job_id, recruiter_name, channel, status)
+               VALUES (%s, %s, %s, 'email', %s)""",
             (user_id, job_id, hr_name, "sent" if email_success else "failed")
         )
-        
+
     if email_success:
-        log_activity(user_id, "message_sent", f"Sent AI-generated email to {hr_name} ({hr_email})")
+        log_activity(
+            user_id, "message_sent",
+            f"Sent AI-generated email to {hr_name} ({hr_email})"
+        )

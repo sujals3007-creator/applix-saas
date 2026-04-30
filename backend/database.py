@@ -1,65 +1,65 @@
 """
 database.py — SaaS Cloud Edition (Neon.tech PostgreSQL)
+
+FIXES v3.1:
+  - master_qa_data column added to schema
+  - get_pending_jobs_for_user is now atomic (FOR UPDATE SKIP LOCKED)
+  - All helpers use %s placeholders
+  - YOE capped at 40 on insert
 """
 import os
 import psycopg2
 from psycopg2.extras import DictCursor
 import logging
-from dotenv import load_dotenv  # 🌟 ADD THIS
+from dotenv import load_dotenv
 
-load_dotenv()  # 🌟 ADD THIS
+load_dotenv()
 
 logger = logging.getLogger("database")
 
-# 1. Grab the Neon DB URL from .env
 DB_URL = os.getenv("DATABASE_URL")
 
 class PgWrapper:
     """
-    A magic wrapper that automatically translates your existing SQLite 
-    commands (like '?' and 'INSERT OR IGNORE') into PostgreSQL syntax 
-    so you don't have to rewrite your entire backend!
+    Thin wrapper that keeps existing code working with PostgreSQL.
+    Translates ? → %s, SQLite date functions → Postgres equivalents,
+    and handles RETURNING id for INSERTs into users.
     """
     def __init__(self, conn):
         self.conn = conn
 
     def execute(self, query, params=()):
-        # 1. Replace SQLite '?' placeholders with Postgres '%s'
         pg_query = query.replace("?", "%s")
-        
-        # 2. Translate SQLite "INSERT OR IGNORE" to Postgres syntax
+
+        # Translate INSERT OR IGNORE patterns
         pg_query = pg_query.replace("INSERT OR IGNORE INTO applied_jobs", "INSERT INTO applied_jobs")
         pg_query = pg_query.replace("INSERT OR IGNORE INTO ignored_jobs", "INSERT INTO ignored_jobs")
-        pg_query = pg_query.replace("INSERT OR IGNORE INTO jobs_queue", "INSERT INTO jobs_queue")
-        
-        # Add ON CONFLICT DO NOTHING for the translated IGNOREs
+        pg_query = pg_query.replace("INSERT OR IGNORE INTO jobs_queue",   "INSERT INTO jobs_queue")
+
         if "INSERT INTO applied_jobs" in pg_query and "ON CONFLICT" not in pg_query:
             pg_query += " ON CONFLICT (user_id, job_id) DO NOTHING"
         if "INSERT INTO ignored_jobs" in pg_query and "ON CONFLICT" not in pg_query:
             pg_query += " ON CONFLICT (user_id, job_id) DO NOTHING"
         if "INSERT INTO jobs_queue" in pg_query and "ON CONFLICT" not in pg_query:
             pg_query += " ON CONFLICT (user_id, job_id) DO NOTHING"
-            
-        # 3. Translate SQLite dates to Postgres dates
+
+        # Translate SQLite date helpers
         pg_query = pg_query.replace("datetime('now')", "CURRENT_TIMESTAMP")
         pg_query = pg_query.replace(
             "date(applied_at, '+5 hours', '+30 minutes')=date('now', '+5 hours', '+30 minutes')",
             "DATE(applied_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE"
         )
-        # 🌟 NEW FIX: Translate the 1-hour interval query!
         pg_query = pg_query.replace(
             "datetime(created_at) >= datetime('now', '-1 hour')",
             "created_at >= NOW() - INTERVAL '1 hour'"
         )
 
-        # 4. Auto-fetch the newly created user ID for auth.py
+        # Auto-return id on INSERT INTO users
         if "INSERT INTO users" in pg_query and "RETURNING" not in pg_query:
             pg_query += " RETURNING id"
 
         cur = self.conn.cursor(cursor_factory=DictCursor)
-        cur.execute(pg_query, params)
-
-        # 🌟 THE FIX: We removed the crashing cur.lastrowid line completely!
+        cur.execute(pg_query, params if params else None)
         return cur
 
     def executescript(self, script):
@@ -75,10 +75,12 @@ class PgWrapper:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.conn.close()
 
+
 def get_db():
     conn = psycopg2.connect(DB_URL)
     conn.autocommit = True
     return PgWrapper(conn)
+
 
 def init_db():
     """Create all tables using PostgreSQL syntax."""
@@ -115,6 +117,7 @@ def init_db():
             key_achievements     TEXT,
             why_good_fit         TEXT,
             resume_text          TEXT,
+            master_qa_data       TEXT,
             updated_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -139,6 +142,7 @@ def init_db():
             company     TEXT,
             applied_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             status      TEXT    DEFAULT 'applied',
+            match_score INTEGER DEFAULT 0,
             UNIQUE(user_id, job_id)
         );
 
@@ -171,24 +175,32 @@ def init_db():
             message    TEXT    NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
+
         CREATE TABLE IF NOT EXISTS ignored_jobs (
-            user_id INTEGER,
-            job_id TEXT,
+            id      SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            job_id  TEXT    NOT NULL,
             UNIQUE(user_id, job_id)
         );
         """)
-        
-        # 🌟 Safely injects the new ATS Match Score column
-        try:
-            conn.execute("ALTER TABLE applied_jobs ADD COLUMN match_score INTEGER DEFAULT 0;")
-        except Exception:
-            pass # Column already exists
-            
-        print("✅ PostgreSQL Database initialised on Neon.tech!")
+
+        # Safely add columns that might not exist yet on existing deployments
+        safe_alters = [
+            "ALTER TABLE applied_jobs ADD COLUMN IF NOT EXISTS match_score INTEGER DEFAULT 0;",
+            "ALTER TABLE candidate_profiles ADD COLUMN IF NOT EXISTS master_qa_data TEXT;",
+            "ALTER TABLE candidate_profiles ADD COLUMN IF NOT EXISTS cookies_saved_at TEXT;",
+        ]
+        for stmt in safe_alters:
+            try:
+                conn.execute(stmt)
+            except Exception:
+                pass
+
+    print("✅ PostgreSQL Database initialised on Neon.tech!")
+
 
 # ──────────────────────────────────────────────────────────────────
-# Convenience write helpers
+# Convenience write helpers  (all use %s — no translation needed)
 # ──────────────────────────────────────────────────────────────────
 
 def log_activity(user_id: int, event_type: str, message: str):
@@ -197,6 +209,7 @@ def log_activity(user_id: int, event_type: str, message: str):
             "INSERT INTO activity_logs (user_id, event_type, message) VALUES (%s,%s,%s)",
             (user_id, event_type, message)
         )
+
 
 def mark_job_applied(user_id: int, job_id: str, url: str,
                      title: str, company: str, status: str = "applied"):
@@ -209,6 +222,7 @@ def mark_job_applied(user_id: int, job_id: str, url: str,
             (user_id, job_id, url, title, company, status)
         )
 
+
 def is_already_applied(user_id: int, job_id: str) -> bool:
     with get_db() as conn:
         row = conn.execute(
@@ -216,6 +230,16 @@ def is_already_applied(user_id: int, job_id: str) -> bool:
             (user_id, job_id)
         ).fetchone()
     return row is not None
+
+
+def is_ignored(user_id: int, job_id: str) -> bool:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM ignored_jobs WHERE user_id=%s AND job_id=%s",
+            (user_id, job_id)
+        ).fetchone()
+    return row is not None
+
 
 def queue_job(user_id: int, job_id: str, url: str, title: str, company: str):
     with get_db() as conn:
@@ -226,35 +250,47 @@ def queue_job(user_id: int, job_id: str, url: str, title: str, company: str):
             (user_id, job_id, url, title, company)
         )
 
-def get_pending_jobs_for_user(user_id: int, limit: int = 10) -> list[dict]:
-    with get_db() as conn:
-        rows = conn.execute(
-            """SELECT * FROM jobs_queue
-               WHERE user_id=%s AND picked_up=0
-               ORDER BY queued_at ASC LIMIT %s""",
-            (user_id, limit)
-        ).fetchall()
-        if rows:
-            ids = tuple(r["id"] for r in rows)
-            conn.execute(
-                "UPDATE jobs_queue SET picked_up=1 WHERE id IN %s",
-                (ids,)
-            )
-    return [dict(r) for r in rows]
 
-def get_user_profile(user_id: int) -> dict | None:
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM candidate_profiles WHERE user_id=%s", (user_id,)
-        ).fetchone()
-    return dict(row) if row else None
+def get_pending_jobs_for_user(user_id: int, limit: int = 1) -> list[dict]:
+    """
+    FIX: Atomically fetches AND marks jobs as picked_up in one transaction.
+    Uses FOR UPDATE SKIP LOCKED to be safe with multiple concurrent users.
+    """
+    conn_raw = psycopg2.connect(DB_URL)
+    conn_raw.autocommit = False
+    try:
+        with conn_raw.cursor(cursor_factory=DictCursor) as cur:
+            cur.execute(
+                """SELECT id, job_id, job_url, title, company
+                   FROM jobs_queue
+                   WHERE user_id=%s AND picked_up=0
+                   ORDER BY queued_at ASC
+                   LIMIT %s
+                   FOR UPDATE SKIP LOCKED""",
+                (user_id, limit)
+            )
+            rows = cur.fetchall()
+            if rows:
+                ids = tuple(r["id"] for r in rows)
+                if len(ids) == 1:
+                    cur.execute("UPDATE jobs_queue SET picked_up=1 WHERE id=%s", (ids[0],))
+                else:
+                    cur.execute("UPDATE jobs_queue SET picked_up=1 WHERE id=ANY(%s)", (list(ids),))
+        conn_raw.commit()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        conn_raw.rollback()
+        logger.error(f"get_pending_jobs_for_user error: {e}")
+        return []
+    finally:
+        conn_raw.close()
 
 
 def get_user_profile(user_id: int) -> dict:
-    """Fetches the user's profile data for outreach."""
+    """Fetches the user's full profile data."""
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM candidate_profiles WHERE user_id=%s", 
+            "SELECT * FROM candidate_profiles WHERE user_id=%s",
             (user_id,)
         ).fetchone()
         return dict(row) if row else {}

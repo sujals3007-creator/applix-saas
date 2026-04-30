@@ -22,7 +22,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 JWT_SECRET  = os.getenv("JWT_SECRET", "change-this-to-a-long-random-string-in-prod")
 JWT_ALGO    = "HS256"
-TOKEN_DAYS  = 7
+TOKEN_DAYS  = 365
+
 
 
 # ── Pydantic models ──────────────────────────────────────────────
