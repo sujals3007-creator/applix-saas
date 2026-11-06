@@ -1,7 +1,6 @@
 // content.js — AI Job Agent v9 (Aggressive Popup Killer Edition)
 
 console.log("🤖 AI Job Agent content.js loaded.");
-
 // ─────────────────────────────────────────────────────────────────
 // UI: THE AGENT CONSOLE PANEL
 // ─────────────────────────────────────────────────────────────────
@@ -25,7 +24,7 @@ header.style.cssText = `
 header.innerHTML = `
     <span style="display:flex; align-items:center; gap:8px;">
         <span id="ai-agent-indicator" style="width:10px;height:10px;border-radius:50%;background:#ef4444;"></span>
-        🤖 AI Agent Telemetry
+        AI Agent Telemetry
     </span>
     <button id="ai-copy-btn" style="background:#0a66c2;color:white;border:none;border-radius:4px;cursor:pointer;font-size:11px;padding:4px 8px;font-weight:bold;">Copy Logs</button>
 `;
@@ -35,15 +34,37 @@ logContainer.style.cssText = "flex: 1; overflow-y: auto; padding: 12px; display:
 
 panel.appendChild(header);
 panel.appendChild(logContainer);
-document.body.appendChild(panel);
 
-document.getElementById("ai-copy-btn").addEventListener("click", () => {
-    navigator.clipboard.writeText(logContainer.innerText);
-    const btn = document.getElementById("ai-copy-btn");
-    btn.innerText = "Copied!";
-    btn.style.background = "#10b981";
-    setTimeout(() => { btn.innerText = "Copy Logs"; btn.style.background = "#0a66c2"; }, 2000);
+// Wait for body to be ready before appending
+function _mountPanel() {
+    if (document.body) {
+        // Remove any stale panel from previous injection
+        const old = document.getElementById("ai-agent-panel");
+        if (old) old.remove();
+        document.body.appendChild(panel);
+        // getElementById works NOW because panel is in DOM
+        const copyBtn = document.getElementById("ai-copy-btn");
+        if (copyBtn) {
+            copyBtn.addEventListener("click", () => {
+                navigator.clipboard.writeText(logContainer.innerText);
+                copyBtn.innerText = "Copied!";
+                copyBtn.style.background = "#10b981";
+                setTimeout(() => { copyBtn.innerText = "Copy Logs"; copyBtn.style.background = "#0a66c2"; }, 2000);
+            });
+        }
+    } else {
+        document.addEventListener("DOMContentLoaded", _mountPanel);
+    }
+}
+_mountPanel();
+
+// Re-mount if LinkedIn's SPA removes the panel during navigation
+const _panelObserver = new MutationObserver(() => {
+    if (!document.getElementById("ai-agent-panel")) {
+        _mountPanel();
+    }
 });
+_panelObserver.observe(document.documentElement, { childList: true, subtree: false });
 
 function agentLog(msg, color = "#94a3b8") {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false });
@@ -96,6 +117,125 @@ function deepQuerySelectorAll(selector, root = document) {
 function getActiveModal() {
     const modals = deepQuerySelectorAll(".jobs-easy-apply-modal, .artdeco-modal, [role='dialog']");
     return modals.find(m => m.getBoundingClientRect().width > 100 && window.getComputedStyle(m).display !== "none" && m.querySelector("button, input")) || document.body;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// LINKEDIN NEW-UI HELPERS (hashed class names → use stable attributes only)
+// Job cards  : div[role=button][componentkey^="job-card-component-ref-<ID>"]
+// Apply btn  : button[aria-label="Easy Apply to this job"]
+// Filter pill: label[aria-label="Filter by Easy Apply"]  (must NOT be clicked)
+// ─────────────────────────────────────────────────────────────────
+function _isVisible(el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && window.getComputedStyle(el).visibility !== "hidden";
+}
+
+function _getCardId(el) {
+    const ck = el.getAttribute && el.getAttribute("componentkey");
+    const m = ck && ck.match(/^job-card-component-ref-(\d+)/);
+    return m ? m[1] : null;
+}
+
+function _cardLooksApplied(text) {
+    // Line-based so titles like "Applied AI Engineer" are NOT mistaken for "Applied · 2 days ago"
+    return /^\s*applied\s*(·|$|\d|on\s|just now)/im.test(text) || /application submitted/i.test(text);
+}
+
+/** Collect unique, not-yet-applied job IDs from the left list (new + old LinkedIn layouts). */
+function _collectJobIds() {
+    const ids = new Set();
+    let skipped = 0;
+    const seen = new Set();
+
+    // New layout: componentkey="job-card-component-ref-<id>" (outer + nested duplicates share the id)
+    document.querySelectorAll('[componentkey^="job-card-component-ref-"]').forEach(el => {
+        const id = _getCardId(el);
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        const text = el.innerText || el.textContent || "";
+        if (_cardLooksApplied(text)) { skipped++; return; }
+        ids.add(id);
+    });
+
+    // Old layout fallbacks
+    if (ids.size === 0 && seen.size === 0) {
+        document.querySelectorAll("[data-job-id], [data-occludable-job-id], .job-card-container, li.scaffold-layout__list-item").forEach(card => {
+            const text = card.innerText || "";
+            const html = card.innerHTML || "";
+            const m = (card.getAttribute("data-job-id") || card.getAttribute("data-occludable-job-id") || "").match(/^\d{7,}$/)
+                   || html.match(/\/jobs\/view\/(\d{7,})/) || html.match(/currentJobId=(\d{7,})/i) || html.match(/jobposting:(\d{7,})/);
+            const id = m && (m[1] || m[0]);
+            if (!id || seen.has(id)) return;
+            seen.add(id);
+            if (_cardLooksApplied(text)) { skipped++; return; }
+            ids.add(id);
+        });
+    }
+    return { ids: Array.from(ids), skipped, total: seen.size };
+}
+
+/** The element that actually scrolls the left job list (found from the first card, no class names needed). */
+function _findListScroller() {
+    const first = document.querySelector('[componentkey^="job-card-component-ref-"]');
+    let el = first ? first.parentElement : null;
+    while (el && el !== document.body) {
+        const cs = window.getComputedStyle(el);
+        if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 20) return el;
+        el = el.parentElement;
+    }
+    return null;
+}
+
+/** Scroll the left list a few times so LinkedIn lazy-loads more cards (it only renders ~25 at first). */
+async function _loadMoreCards(rounds = 4) {
+    const scroller = _findListScroller();
+    if (!scroller) return;
+    for (let i = 0; i < rounds; i++) {
+        const before = document.querySelectorAll('[componentkey^="job-card-component-ref-"]').length;
+        scroller.scrollBy({ top: scroller.clientHeight * 0.9, behavior: "smooth" });
+        await new Promise(r => setTimeout(r, 1200));
+        const after = document.querySelectorAll('[componentkey^="job-card-component-ref-"]').length;
+        if (after === before && i > 0) break;
+    }
+    scroller.scrollTo({ top: 0, behavior: "smooth" });
+    await new Promise(r => setTimeout(r, 600));
+}
+
+/**
+ * Find the REAL "Easy Apply" button of the job shown in the right pane.
+ * Never matches: job cards (their text contains "Easy Apply"), the "Filter by Easy Apply" pill,
+ * external "Apply" buttons, or anything inside the filter bar / left list.
+ */
+function _findEasyApplyButton() {
+    const bad = el =>
+        el.closest('[componentkey^="job-card-component-ref-"]') ||
+        el.closest('[componentkey="JobsSearchFilters"], nav, [role="toolbar"]') ||
+        /^filter by/i.test(el.getAttribute("aria-label") || "") ||
+        el.disabled || !_isVisible(el);
+
+    // 1) Exact: <button aria-label="Easy Apply to this job">
+    let btn = Array.from(document.querySelectorAll('button[aria-label*="Easy Apply" i], a[aria-label*="Easy Apply" i]')).find(el => !bad(el));
+    if (btn) return btn;
+
+    // 2) Any real <button>/<a> whose own visible text is just "Easy Apply" / "LinkedIn Apply"
+    btn = Array.from(document.querySelectorAll("button, a")).find(el => {
+        if (bad(el)) return false;
+        const t = (el.innerText || el.textContent || "").trim().toLowerCase();
+        return t.length < 30 && (t === "easy apply" || t === "linkedin apply");
+    });
+    return btn || null;
+}
+
+/** Wait until the right pane shows the job we navigated to (soft: continues after timeout). */
+async function _waitForRightPaneJob(jobId, timeoutMs = 12000) {
+    if (!jobId) return;
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+        if (document.querySelector(`[componentkey*="${jobId}"]:not([componentkey^="job-card-component-ref-"]), [id*="${jobId}"]`)) return;
+        if (_findEasyApplyButton()) return;
+        await new Promise(r => setTimeout(r, 500));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -174,7 +314,6 @@ async function setReactValue(element, value) {
 
         const tag = element.tagName.toLowerCase();
 
-        // 🌟 NEW: Handles standalone mandatory checkboxes (e.g. "I agree to the terms")
         if (tag === "input" && (element.type === "checkbox" || element.type === "radio")) {
             const search = String(value).toLowerCase().trim();
             const isPositive = search === "yes" || search === "true" || search === "1" || search === "agree" || search === "accept" || search === "data not found";
@@ -217,15 +356,18 @@ async function setReactValue(element, value) {
         
         if (element.getAttribute("role") === "combobox" || element.id.toLowerCase().includes("location") || element.id.toLowerCase().includes("city")) {
             agentLog(`[Debug] Combobox detected. Waiting for LinkedIn dropdown...`, "#d946ef");
-            await new Promise(r => setTimeout(r, 2000)); 
+            
+            await new Promise(r => setTimeout(r, 2500)); 
+            
             const container = element.closest('.jobs-easy-apply-form-section__grouping') || document.body;
             const dropdown = container.querySelector("[role='listbox'], .basic-typeahead__results");
+            
             if (dropdown) {
                 const options = dropdown.querySelectorAll("[role='option'], .basic-typeahead__result");
                 if (options.length > 0) {
                     const firstOption = options[0];
                     firstOption.scrollIntoView({ behavior: "smooth", block: "nearest" });
-                    await new Promise(r => setTimeout(r, 300));
+                    await new Promise(r => setTimeout(r, 400));
                     ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(evType => {
                         firstOption.dispatchEvent(new MouseEvent(evType, { bubbles: true, cancelable: true, view: window }));
                     });
@@ -233,7 +375,7 @@ async function setReactValue(element, value) {
                 }
             } else {
                 element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", keyCode: 40, bubbles: true }));
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 800));
                 element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", keyCode: 13, bubbles: true }));
                 await new Promise(r => setTimeout(r, 1000));
             }
@@ -251,7 +393,7 @@ async function setReactValue(element, value) {
 function _getFormActionBtn(modal) {
     return deepQuerySelectorAll("button", modal).find(btn => {
         const t = (btn.innerText || btn.textContent || "").toLowerCase().trim();
-        const isAction = t === "next" || t === "review" || t.includes("submit") || t.includes("continue") || t === "agree";
+        const isAction = t === "next" || t === "review" || t.includes("submit") || t.includes("continue") || t === "agree" || t.includes("review your");
         const isBack = t.includes("back") || t.includes("cancel");
         return isAction && !isBack && btn.getBoundingClientRect().width > 0;
     });
@@ -297,18 +439,10 @@ async function startSingleJobApply() {
     try {
         await humanScroll();
         let easyApplyBtn = null;
+        const _urlJobId = (window.location.href.match(/currentJobId=(\d+)/) || window.location.href.match(/\/jobs\/view\/(\d+)/) || [])[1];
+        await _waitForRightPaneJob(_urlJobId);
         for (let i = 0; i < 15; i++) {
-            const rightPane = document.querySelector("[data-sdui-screen*='SemanticJobDetails'], [role='main'], .jobs-search__job-details--container") || document.body;
-            
-            easyApplyBtn = deepQuerySelectorAll("button, a, [role='button']", rightPane).find(el => {
-                const isLeftPane = el.closest('[componentkey="SearchResultsMainContent"]') || el.closest('.jobs-search-results-list');
-                if (isLeftPane) return false;
-                
-                const t = (el.innerText || el.textContent || el.getAttribute("aria-label") || "").toLowerCase().trim();
-                const isEasyApply = t === "easy apply" || t === "linkedin easy apply" || t.includes("easy apply");
-                const isExternal = t.includes("company site") || t.includes("on site") || t.includes("external");
-                return isEasyApply && !isExternal && !el.disabled && el.getBoundingClientRect().width > 0;
-            });
+            easyApplyBtn = _findEasyApplyButton();
             if (easyApplyBtn) break;
             await humanDelay(1000, 1500);
         }
@@ -337,13 +471,15 @@ async function startSingleJobApply() {
             agentLog("⏭️ Skipped: No internal Easy Apply button found.", "#fbbf24");
             _jobStatus = "skipped";
             setAgentStatus("idle");
-            chrome.runtime.sendMessage({ action: "job_completed", status: "skipped" });
         }
     } catch (err) {
+        if (err.message && (err.message.includes("Extension context") || err.message.includes("context invalidated") || err.message.includes("message channel"))) {
+            console.log("[Agent] Page navigated mid-apply — extension context gone. Safe to ignore.");
+            return;
+        }
         agentLog(`❌ Fatal Error: ${err.message}`, "#ef4444");
         _jobStatus = "error";
         setAgentStatus("error");
-        chrome.runtime.sendMessage({ action: "job_completed", status: "error" });
     }
 }
 
@@ -450,15 +586,12 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
         if (!inputId) continue;
         const inp = allInputs.find(i => i.id === inputId);
         if (!inp || inp.disabled || inp.type === "hidden" || inp.type === "file") continue;
-        // 🛑 THE FIX: Blind the AI to the Resume and Cover Letter buttons!
-        // If we don't hide these, the AI tries to "answer" them and toggles them off.
+        
         if (inp.value && (inp.value.includes("urn:li:fsd_profileDocument") || inp.value.includes("urn:li:fsd_coverLetterDocument"))) {
             continue;
         }
         if ((inp.type === "radio" || inp.type === "checkbox") && inp.closest("fieldset")) continue;
-        // 🛑 THE AI BLINDER: Hide Resume & Cover Letter from Groq
-        // If we don't hide these, the AI tries to "answer" them and toggles them off.
-        // 🛑 THE AGGRESSIVE AI BLINDER: Hide Resume & Cover Letter completely
+        
         const valStr = (inp.value || "").toLowerCase();
         const parentHtml = (inp.closest('.jobs-easy-apply-form-section__grouping') || inp.parentElement).innerHTML.toLowerCase();
         
@@ -467,29 +600,39 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
             parentHtml.includes("resume") || 
             parentHtml.includes("cv") || 
             parentHtml.includes("cover letter")) {
-            continue; // Force the AI to ignore this entirely
+            continue; 
         }
 
         let txt = (label.innerText || "").replace(/Required/ig, "").replace(/\*/g, "").trim();
         if (txt.length) { 
             let inputType = inp.type ? ` [Type: ${inp.type}]` : "";
-            questions.push(txt + inputType); 
+            let optionsStr = "";
+            
+            if (inp.tagName.toLowerCase() === "select") {
+                const opts = Array.from(inp.options).map(o => o.text.trim()).filter(t => t && !t.includes("Select"));
+                if (opts.length > 0) optionsStr = ` [Options: ${opts.join(" | ")}]`;
+            }
+            
+            questions.push(txt + inputType + optionsStr); 
             inputEls.push(inp); 
         }
     }
 
-    // Scan Fieldsets for Radio Button questions (Yes/No)
     for (const fs of deepQuerySelectorAll("fieldset", modal)) {
         if (!fs.getBoundingClientRect().width) continue;
         const legend = fs.querySelector("legend");
         if (!legend) continue;
 
-        const radios = Array.from(fs.querySelectorAll("input[type='radio']"));
+        // 🌟 FIX: Include checkboxes so Lever ATS and custom forms are scanned
+        const radios = Array.from(fs.querySelectorAll("input[type='radio'], input[type='checkbox']"));
         if (radios.length === 0) continue;
 
         let txt = (legend.innerText || legend.textContent || "").replace(/Required/ig, "").replace(/\*/g, "").trim();
         if (txt.length) {
-            questions.push(txt + " [Type: radio_yes_no]");
+            const labels = Array.from(fs.querySelectorAll("label")).map(l => l.innerText.trim()).filter(t => t);
+            let optionsStr = labels.length > 0 ? ` [Options: ${labels.join(" | ")}]` : "";
+            
+            questions.push(txt + " [Type: radio]" + optionsStr);
             inputEls.push(fs); 
         }
     }
@@ -500,37 +643,62 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
         let apiSuccess = false;
         let result = null;
 
-        const store = await chrome.storage.local.get("saas_jwt_token");
-        const headers = { "Content-Type": "application/json" };
-        if (store.saas_jwt_token) headers["Authorization"] = "Bearer " + store.saas_jwt_token;
-
         // 🌟 NEW: Scrape Job Description for ATS Match
         const jdEl = document.querySelector("#job-details, .jobs-description-content__text");
         const jdText = jdEl ? jdEl.innerText.substring(0, 3000) : "";
 
-        // 🌟 THE FIX: Try up to 3 times with a 5-second cooldown if Groq rate-limits us!
+        // ─────────────────────────────────────────────────────────────
+        // ROOT-CAUSE FIX: All fetch() calls have been moved to background.js.
+        // content.js runs inside LinkedIn's page and is subject to LinkedIn's
+        // strict Content-Security-Policy, which blocks outbound requests to
+        // our Cloud Run backend — especially on later form pages where the
+        // CSP has fully propagated. background.js is a service worker and is
+        // exempt from page-level CSP. Routing through sendMessage is the
+        // correct, permanent fix for "Failed to fetch" network errors.
+        // ─────────────────────────────────────────────────────────────
+
+        // Step 1: Warm up Cloud Run via background.js (no CSP restrictions there)
+        await new Promise((resolve) => {
+            chrome.runtime.sendMessage({ action: "WARMUP_BACKEND" }, () => resolve());
+        });
+
+        // Step 2: Ask AI for answers — routed through background.js service worker
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-                const resp = await fetch("https://ai-job-agent-backend-qmq1.onrender.com/api/answer-questions", {
-                    method: "POST", headers: headers, 
-                    body: JSON.stringify({ questions: questions, job_description: jdText }), // 🌟 ADDED JD
+                result = await new Promise((resolve, reject) => {
+                    // 50s total timeout covering Cloud Run cold start (30s+) + inference
+                    const timeoutId = setTimeout(() => reject(new Error("Request timed out after 50s")), 50000);
+                    chrome.runtime.sendMessage(
+                        { action: "FETCH_AI_ANSWERS", questions: questions, job_description: jdText },
+                        (response) => {
+                            clearTimeout(timeoutId);
+                            if (chrome.runtime.lastError) {
+                                reject(new Error(chrome.runtime.lastError.message));
+                            } else {
+                                resolve(response);
+                            }
+                        }
+                    );
                 });
-                result = await resp.json();
-                
-                if (result.status === "success") {
+
+                if (result && result.status === "success") {
                     apiSuccess = true;
-                    _currentMatchScore = result.match_score || 0; // 🌟 SAVED SCORE
+                    _currentMatchScore = result.match_score || 0;
                     agentLog(`🎯 AI ATS Match Score: ${_currentMatchScore}%`, "#10b981");
-                    break; // Success! Exit the retry loop.
+                    break;
                 } else {
-                    agentLog(`⚠️ API Error (Attempt ${attempt}/3): ${result.message}`, "#fbbf24");
-                    if (result.message && result.message.toLowerCase().includes("resume")) break; 
-                    agentLog("⏳ Cooling down for 5 seconds before retrying...", "#cbd5e1");
-                    await humanDelay(4500, 5500); 
+                    const msg = (result && result.message) || "Unknown error";
+                    const isRateLimit = msg.includes("429") || msg.includes("rate") || msg.includes("quota");
+                    agentLog(`⚠️ API Error (Attempt ${attempt}/3): ${msg}`, "#fbbf24");
+                    if (msg.toLowerCase().includes("resume")) break;
+                    const waitMs = isRateLimit ? (attempt * 15000) : 5000;
+                    agentLog(`⏳ Cooling down for ${waitMs/1000}s before retrying...`, "#cbd5e1");
+                    await humanDelay(waitMs, waitMs + 2000);
                 }
             } catch (err) {
-                agentLog(`⚠️ Network Error (Attempt ${attempt}/3): ${err.message}`, "#fbbf24");
-                await humanDelay(4500, 5500);
+                agentLog(`⚠️ API Error (Attempt ${attempt}/3): ${err.message}`, "#fbbf24");
+                const waitMs = attempt * 5000;
+                await humanDelay(waitMs, waitMs + 2000);
             }
         }
 
@@ -539,54 +707,135 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
                 for (let i = 0; i < inputEls.length; i++) {
                     let ans = String(result.answers[i] || "Yes").trim();
                     const q = questions[i].toLowerCase();
-                    
-                     //1. Smart numerical defaults for missing AI answers
+                    const inp = inputEls[i];
+
+                    // ── IDENTITY GUARD (client-side) ──────────────────────────────
+                    // If the AI returned "Yes" / "No" / single digit for a phone / email / name field, it's wrong.
+                    const isIdentityField = /phone|mobile|mobile phone|contact number|contact no|email address|full name|your name|location|city/.test(q);
+                    if (isIdentityField && /^(yes|no|true|false|[0-9])$/i.test(ans.trim())) {
+                        agentLog(`⚠️ Identity field "${q.substring(0,25)}..." got bad value "${ans}" — skipping injection.`, "#fbbf24");
+                        continue; // Skip — don't overwrite LinkedIn's pre-filled value
+                    }
+
+                    //1. Smart numerical defaults for missing AI answers
                     // 1. Smart numerical defaults for missing AI answers
                     if (ans === "Data Not Found" || ans === "0" || ans === "") {
                         if (q.includes("experience") || q.includes("years") || q.includes("how many")) ans = "2";
-                        else if (q.includes("ctc") || q.includes("salary") || q.includes("pay")) ans = "300000";
+                        else if (q.includes("ctc") || q.includes("salary") || q.includes("pay") || q.includes("ectc") || q.includes("compensation") || q.includes("lpa")) ans = "800000";
                         else if (q.includes("gpa") || q.includes("cgpa") || q.includes("grade")) ans = "3.5";
-                        
-                        // 🌟 THE FIX: Added "how soon" and "days" to the notice period check
                         else if (q.includes("notice") || q.includes("availability") || q.includes("how soon") || q.includes("days")) ans = "30"; 
-                        
                         else if (q.includes("year")) ans = new Date().getFullYear().toString();
                         else ans = "Yes";
-                        
                         agentLog(`⚠️ Guessing missing answer for "${q.substring(0, 20)}..." -> ${ans}`, "#fbbf24");
                     }
 
-                    // 2. Strict digit-only stripping for number fields
-                    // 🌟 THE FIX: Added the new keywords here too so it strips out text!
-                    if (q.includes("how many") || q.includes("experience") || q.includes("years") || q.includes("gpa") || q.includes("ctc") || q.includes("notice") || q.includes("how soon") || q.includes("days") || inputEls[i].type === "number") {
-                        ans = ans.replace(/[^0-9.]/g, ""); 
+
+                    // 2. Numeric field handling — salary/CTC checked FIRST to avoid YOE cap
+                    const isSalaryField = /ctc|salary|pay|ectc|compensation|lpa|package|remuneration/.test(q);
+                    const isYOEField = !isSalaryField && (
+                        q.includes("how many") || q.includes("experience") ||
+                        q.includes("years") || q.includes("notice") ||
+                        q.includes("how soon") || q.includes("days") ||
+                        q.includes("gpa") || q.includes("cgpa") ||
+                        inp.type === "number"
+                    );
+
+                    if (isSalaryField) {
+                        // Salary: strip non-digits, NEVER cap (800000 is correct, not hallucinated)
+                        ans = ans.replace(/[^0-9]/g, "");
+                        if (ans === "" || parseInt(ans) < 1000) {
+                            ans = (q.includes("ectc") || q.includes("expected")) ? "1000000" : "800000";
+                            agentLog(`⚠️ Salary fallback for: "${q.substring(0,30)}..."`, "#fbbf24");
+                        }
+                    } else if (isYOEField) {
+                        ans = ans.replace(/[^0-9.]/g, "");
                         if (ans === "") {
                             if (q.includes("notice") || q.includes("how soon") || q.includes("days")) ans = "30";
-                            else if (q.includes("ctc")) ans = "300000";
-                            else ans = "2"; 
+                            else if (q.includes("gpa") || q.includes("cgpa")) ans = "3.5";
+                            else ans = "2";
+                        }
+                        const numVal = parseFloat(ans);
+                        // Round decimals for YOE fields
+                        if (!isNaN(numVal) && (q.includes("experience") || q.includes("years") || q.includes("how many"))) {
+                            ans = String(Math.round(numVal));
+                        }
+                        // Hard cap at 99 — LinkedIn max, and catches hallucinated years like 2024
+                        if (!isNaN(parseFloat(ans)) && parseFloat(ans) > 99) {
+                            agentLog(`⚠️ Capping "${ans}" → 2 for: "${q.substring(0,30)}..."`, "#fbbf24");
+                            ans = "2";
+                        }
+                        // Secondary cap: no skill can have >40 years experience
+                        if (!isNaN(parseFloat(ans)) && parseFloat(ans) > 40 && (q.includes("experience") || q.includes("years"))) {
+                            ans = "2";
                         }
                     }
                     
-                    await setReactValue(inputEls[i], ans);
+                    await setReactValue(inp, ans);
                     await humanDelay(600, 1000);
             }
         } else {
-            agentLog(`❌ Backend API Failed after 3 attempts. Aborting job.`, "#ef4444");
-            await _abortCurrentApplication();
-            _jobStatus = "error";
-            return; 
+            agentLog(`❌ Backend API Failed after 3 attempts. Trying to submit what's filled...`, "#fbbf24");
+            const fallbackBtn = _getFormActionBtn(modal);
+            if (fallbackBtn && (fallbackBtn.innerText || "").toLowerCase().includes("submit")) {
+                agentLog("🚀 Attempting submit with pre-filled data...", "#10b981");
+                _forceClickBtn(fallbackBtn);
+                await humanDelay(3500, 5000);
+                const postErrors = deepQuerySelectorAll(".artdeco-inline-feedback--error", modal)
+                    .filter(e => e.getBoundingClientRect().width > 0);
+                if (postErrors.length > 0) {
+                    agentLog("❌ Validation errors — aborting.", "#ef4444");
+                    await _abortCurrentApplication();
+                    _jobStatus = "error";
+                    return;
+                }
+                agentLog("✅ DONE! Application submitted (API fallback).", "#10b981");
+                _jobStatus = "success";
+                return;
+            } else if (fallbackBtn) {
+                agentLog("➡️ API failed — clicking Next to continue...", "#fbbf24");
+                _forceClickBtn(fallbackBtn);
+                await humanDelay(2000, 3000);
+            } else {
+                agentLog("❌ No button found — aborting.", "#ef4444");
+                await _abortCurrentApplication();
+                _jobStatus = "error";
+                return;
+            }
         }
     }
 
     const freshBtn = _getFormActionBtn(modal);
     if (!freshBtn) { await _abortCurrentApplication(); return; }
 
-    const isSubmit = (freshBtn.innerText || "").toLowerCase().includes("submit");
+    const btnText = (freshBtn.innerText || freshBtn.textContent || "").toLowerCase().trim();
+    const isSubmit = btnText.includes("submit");
+    const isReview = btnText === "review" || btnText.includes("review your");
 
-    if (isSubmit) {
-        agentLog("🚀 Form complete! Clicking Submit...", "#10b981");
-        _forceClickBtn(freshBtn);
-        await humanDelay(3500, 5000); 
+    if (isSubmit || isReview) {
+        if (isReview) {
+            // Click Review to get to the final Submit page
+            agentLog("📋 Clicking Review to reach Submit page...", "#10b981");
+            _forceClickBtn(freshBtn);
+            await humanDelay(2500, 3500);
+            // Now find and click the actual Submit button
+            const submitBtn = deepQuerySelectorAll("button", modal).find(btn => {
+                const t = (btn.innerText || btn.textContent || "").toLowerCase().trim();
+                return t.includes("submit") && btn.getBoundingClientRect().width > 0;
+            });
+            if (submitBtn) {
+                agentLog("🚀 Submit button found! Clicking...", "#10b981");
+                _forceClickBtn(submitBtn);
+                await humanDelay(3500, 5000);
+            } else {
+                agentLog("⚠️ No Submit button after Review — page may have changed", "#fbbf24");
+                await scanAndAnswerForm(pageNum + 1, 0);
+                return;
+            }
+        } else {
+            agentLog("🚀 Form complete! Clicking Submit...", "#10b981");
+            _forceClickBtn(freshBtn);
+            await humanDelay(3500, 5000);
+        } 
         
         const postErrors = deepQuerySelectorAll(".artdeco-inline-feedback--error", modal).filter(e => e.getBoundingClientRect().width > 0);
         if (postErrors.length) {
@@ -610,6 +859,8 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
     } else {
         agentLog("➡️ Clicking Next...", "#cbd5e1");
         _forceClickBtn(freshBtn);
+        // Keep Cloud Run warm during page transition — routed through background.js (no CSP)
+        chrome.runtime.sendMessage({ action: "WARMUP_BACKEND" });
         await humanDelay(2500, 3500);
         await scanAndAnswerForm(pageNum + 1, 0);
     }
@@ -696,18 +947,8 @@ function _clickCard(card) {
 async function _waitForEasyApplyBtn(timeoutMs = 15000) {
     const end = Date.now() + timeoutMs;
     while (Date.now() < end) {
-        await _dismissBlockingModals(); 
-        // Added [role='main'] as a fallback for the new right pane structure
-        const rightPane = document.querySelector("[data-sdui-screen*='SemanticJobDetails'], [role='main'], .jobs-search__job-details--container") || document.body;
-        
-        const btn = deepQuerySelectorAll("button, a, [role='button']", rightPane).find(el => {
-            // 🛑 CRITICAL FIX: Only block the LEFT pane's lazy column, not the right pane's!
-            const isLeftPane = el.closest('[componentkey="SearchResultsMainContent"]') || el.closest('.jobs-search-results-list');
-            if (isLeftPane) return false;
-            
-            const t = (el.innerText || el.textContent || "").toLowerCase().trim();
-            return (t === "easy apply" || t.includes("easy apply")) && !t.includes("company") && !el.disabled && el.getBoundingClientRect().width > 0;
-        });
+        await _dismissBlockingModals();
+        const btn = _findEasyApplyButton();
         if (btn) return btn;
         await humanDelay(500, 700);
     }
@@ -743,66 +984,35 @@ function sendFinalPayload() {
 // ─────────────────────────────────────────────────────────────────
 // UNIFIED PIPELINE: HARVEST MANUALLY SEARCHED JOBS (BULLETPROOF)
 // ─────────────────────────────────────────────────────────────────
-function harvestAndQueueJobs() {
+async function harvestAndQueueJobs() {
     agentLog("=======================================", "#64748b");
     agentLog("🚀 HARVESTING JOBS FROM SCREEN...", "#10b981");
     agentLog("=======================================", "#64748b");
-    
-    const jobIds = new Set();
-    let rawSkippedLinks = 0;
-    
-    // 🌟 THE FIX: Ignore classes! Find ALL links on the page that point to a job.
-    const jobLinks = document.querySelectorAll("a[href*='/jobs/view/'], a[href*='currentJobId=']");
-    
-    jobLinks.forEach(a => {
-        // Find the container surrounding the link to check for "Applied" status
-        const card = a.closest('li') || a.closest('.job-card-container') || a.closest('div[data-job-id]') || a.parentElement;
-        
-        if (card) {
-            const text = (card.innerText || "").toLowerCase();
-            if (text.includes("applied") || text.includes("application submitted")) {
-                rawSkippedLinks++;
-                return; // Skip this job!
-            }
-            // 🌟 THE FIX: Ignore external jobs completely!
-            if (!text.includes("easy apply")) {
-                return; // Skip if it doesn't say Easy Apply
-            }
-        }
-        // Extract the Job ID securely from the link URL
-        let jobId = null;
-        const viewMatch = a.href.match(/\/jobs\/view\/(\d+)/);
-        
-        if (viewMatch) {
-            jobId = viewMatch[1];
-        } else {
-            try {
-                const urlObj = new URL(a.href, window.location.origin);
-                jobId = urlObj.searchParams.get("currentJobId");
-            } catch(e) {}
-        }
-        
-        // Only add valid numerical Job IDs (LinkedIn IDs are usually 9-10 digits)
-        if (jobId && /^\d+$/.test(jobId) && jobId.length >= 7) {
-            jobIds.add(jobId);
-        }
-    });
-    
-    // LinkedIn has ~2-3 links per job card (Title, Logo, etc.), so we divide to get the real count
-    const estimatedSkipped = Math.floor(rawSkippedLinks / 2);
-    
-    if (jobIds.size === 0) {
-        agentLog(`⚠️ Skipped ~${estimatedSkipped} applied jobs. No new jobs found. Scroll down!`, "#fbbf24");
+
+    await _loadMoreCards(4);
+    const { ids, skipped, total } = _collectJobIds();
+    agentLog(`[Debug] Cards on screen: ${total} | already applied: ${skipped} | new: ${ids.length}`, "#d946ef");
+
+    if (ids.length === 0) {
+        agentLog(`⚠️ Skipped ~${skipped} applied jobs. No new jobs found. Scroll down or change filters!`, "#fbbf24");
         return;
     }
 
-    agentLog(`🎯 Skipped ~${estimatedSkipped} applied. Injecting ${jobIds.size} NEW jobs into Queue...`, "#8b5cf6");
-    
-    // Convert to the exact URL format the background script expects
-    const urls = Array.from(jobIds).map(id => `https://www.linkedin.com/jobs/view/${id}/`);
-    
-    // Inject directly into the background.js Watchdog Queue!
-    chrome.runtime.sendMessage({ action: "start_campaign", urls: urls }, (response) => {
+    agentLog(`🎯 Skipped ~${skipped} applied. Injecting ${ids.length} NEW jobs into Queue...`, "#8b5cf6");
+    const urls = ids.map(id => `https://www.linkedin.com/jobs/view/${id}/`);
+
+    chrome.runtime.sendMessage({ action: "POLL_PENDING_JOBS" }, (data) => {
+        void chrome.runtime.lastError;
+        if (!data) return;
+        if (data.target_roles && data.target_roles.length > 0) chrome.storage.local.set({ targetRoles: data.target_roles });
+        if (data.target_locations && data.target_locations.length > 0) chrome.storage.local.set({ targetLocations: data.target_locations });
+    });
+
+    // Remember which Easy Apply search the user is on so every job is opened inside the same filters.
+    try { await chrome.storage.local.set({ campaignSearchQuery: window.location.search }); } catch (e) {}
+
+    chrome.runtime.sendMessage({ action: "start_campaign", urls }, () => {
+        void chrome.runtime.lastError;
         agentLog("✅ Jobs successfully added to the background queue!", "#10b981");
     });
 }
@@ -812,10 +1022,20 @@ function harvestAndQueueJobs() {
 // ─────────────────────────────────────────────────────────────────
 // MESSAGE LISTENER
 // ─────────────────────────────────────────────────────────────────
+// 🌟 THIS LOCK PREVENTS MULTIPLE AGENTS FROM RUNNING AT ONCE
+let isApplyingLock = false;
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
-    // 1. The Auto-SaaS Trigger (Handles BOTH Auto & Manual Jobs now!)
+    // 1. The Auto-SaaS Trigger
     if (request.action === "auto_start_apply") {
+        if (isApplyingLock) {
+            console.log("Agent already running. Ignoring duplicate trigger.");
+            sendResponse({ status: "ignored_locked" });
+            return true;
+        }
+        
+        isApplyingLock = true; // 🔒 LOCK THE AGENT
         agentLog("🚀 Agent Job Triggered...", "#3b82f6");
         
         startSingleJobApply().then(() => {
@@ -826,25 +1046,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     status: "success",
                     hr_name: _foundHrName,
                     hr_url: _foundHrUrl,
-                    match_score: _currentMatchScore // 🌟 ADDED MATCH SCORE
+                    match_score: _currentMatchScore
                 });
             } else {
                 agentLog(`⏭️ Job bypassed. Status: ${_jobStatus}`, "#fbbf24");
                 chrome.runtime.sendMessage({ action: "job_completed", status: "skipped" });
             }
+            isApplyingLock = false; // 🔓 UNLOCK THE AGENT
         }).catch((err) => {
             agentLog("❌ Fatal Error: " + err.message, "#ef4444");
             chrome.runtime.sendMessage({ action: "job_completed", status: "error" });
+            isApplyingLock = false; // 🔓 UNLOCK THE AGENT
         });
         
         sendResponse({ status: "ok" });
         return true; 
     }
 
-    // 2. The Manual Popup Trigger (Now Harvests instead of clicking!)
+    // 2. The Manual Popup Trigger
     if (request.action === "start_same_tab_campaign") {
         harvestAndQueueJobs();
         sendResponse({ status: "ok" });
         return false;
+    }
+
+    // 3. Auto Scan: Silent scrape — background.js opens this tab just to collect job IDs.
+    if (request.action === "SCRAPE_JOBS_FOR_SCAN") {
+        (async () => {
+            await _loadMoreCards(2);
+            const finalIds = _collectJobIds().ids;
+            console.log(`[AutoScan] SCRAPE_JOBS_FOR_SCAN → extracted ${finalIds.length} Job IDs.`);
+            sendResponse(finalIds);
+        })();
+        return true;
     }
 });

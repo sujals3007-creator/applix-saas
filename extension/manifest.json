@@ -1,19 +1,20 @@
 ﻿{
   "manifest_version": 3,
   "name": "AI Job Agent",
-  "version": "3.0",
+  "version": "3.1",
   "description": "AI-powered LinkedIn Easy Apply automation.",
   "permissions": [
     "storage",
     "cookies", 
     "tabs",
+    "alarms",
     "activeTab",
     "scripting"
   ],
   "host_permissions": [
     "*://*.linkedin.com/*",
-    "https://*.onrender.com/*"
-  ],
+    "https://*.run.app/*"
+],
   "background": {"service_worker": "background.js"},
   "action": {"default_popup": "popup.html","default_title": "AI Job Agent"},
   "content_scripts": [{"matches": ["*://*.linkedin.com/*"],"js": ["content.js","saas_content.js"]}]

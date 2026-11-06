@@ -16,7 +16,7 @@ from typing import Optional #using optional as if we can allow two values in whi
 import os, io, json, re, logging  #importing operating system, Io used for handling in memory files, json, regular expression used for searching text, logging
 import pdfplumber #used to extract text from pdf files
 from dotenv import load_dotenv # load secret keys and variables from .env file
-from langchain_groq import ChatGroq #to communicate with groq model
+from groq_pool import groq_invoke, pool_status   # multi-key Groq with automatic fail-over
 from langchain_core.prompts import PromptTemplate #it used for long prompts
 
 load_dotenv() # calls for environment variables (.env)
@@ -27,6 +27,7 @@ from database import (  #importing database
     init_db, get_db, log_activity, mark_job_applied, #initialise database like setting up environment, get db means opening and closing of databse, log activity records activity of users doing in website, marking to jobs that have been applied 
     get_pending_jobs_for_user, get_user_profile #jobs thatare in queue, store the details of users skils from databse
 )
+from answer_postprocess import postprocess_answer
 from auth import router as auth_router, get_current_user # seccurity guard like wrong login details 
 from monitor import start_scheduler, stop_scheduler, get_scheduler_status # starts checking for new jobs every 5 min, stops auto scans, checks whether the agent is active or not
 from cookie_auth import get_cookies, validate_cookies, save_cookies_to_env #check cookies 
@@ -49,6 +50,14 @@ app.include_router(auth_router) # make user login and registration work on your 
 @app.on_event("startup") #preparing database by running scheduler functions 
 async def startup(): #triggers task to be done in background
     init_db() #triggers databse 
+    _n_keys = pool_status()["total_keys"]
+    if _n_keys == 0:
+        logger.error("❌ No Groq key found. Set GROQ_API_KEYS (comma-separated) or GROQ_API_KEY in Render > Environment.")
+    else:
+        logger.info(f"✅ Groq key pool loaded: {_n_keys} key(s).")
+    for _name in ("DATABASE_URL", "JWT_SECRET"):
+        if not (os.getenv(_name) or "").strip():
+            logger.error(f"❌ Environment variable {_name} is NOT set on this server - add it in Render > Environment.")
     start_scheduler() # starts the schedule of finding new jobs on linkedin
 
 
@@ -86,7 +95,6 @@ async def parse_resume_to_form(file: UploadFile = File(...), user=Depends(get_cu
                 text = page.extract_text() #extract text from the specific page we are on 
                 if text: resume_text += text + "\n" #added text to the variable if the text wa extracted 
 
-        llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0.1, groq_api_key=os.getenv("GROQ_API_KEY")) #creates a json format of the text extrated from the resume 
         
         prompt_template = """ 
         You are an expert HR assistant. Extract the candidate's details from the RESUME below to answer a specific set of job application questions.
@@ -120,9 +128,8 @@ async def parse_resume_to_form(file: UploadFile = File(...), user=Depends(get_cu
         - "q_gpa": extract if present, else "Not Specified"
         """
         
-        prompt = PromptTemplate.from_template(prompt_template) # PromptTemplate is taken from the template's langchain library tell me the 
-        chain = prompt | llm # this is a pipeline of linking the prompt and the groq model
-        resp = chain.invoke({"resume_text": resume_text}) # the model has now processed the the prompt 
+        prompt_text = PromptTemplate.from_template(prompt_template).format(resume_text=resume_text)
+        resp = groq_invoke(prompt_text, model="openai/gpt-oss-120b", temperature=0.1)
         
         raw_output = resp.content.strip() #takes the raw text respomse from the model and remove the leading and trailing spaces from the text using strip()
         if raw_output.startswith("```json"): # raw output that also give some starting given my model
@@ -154,17 +161,14 @@ def match_job(job: JobDescription): # matching job or generatingb a cover letter
     if not USER_RESUME_TEXT: # if he does not getv any resume text
         return {"status": "error", "message": "Please upload a resume first."} #it returns an error message 
     try: #using try function 
-        llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0.7, groq_api_key=os.getenv("GROQ_API_KEY"))#using llama model of groq with a 0.7 temperature creating more randomness and creating text using groq api from the environment variables
         prompt_template = f""" 
         USER'S RESUME CONTEXT: {USER_RESUME_TEXT}
         JOB TITLE: {{title}} | COMPANY: {{company}} | DESCRIPTION: {{description}}
         Write a highly tailored 3-sentence cover letter introduction.
         Return ONLY the cover letter text.
         """    #writing a prompt that wll be send to groq
-        prompt = PromptTemplate.from_template(prompt_template) #taking the prompt template from the langchain library and the prompt we have craeted just now 
-        chain  = prompt | llm  #creating a pipeline 
-        resp   = chain.invoke({"title": job.title, "company": job.company,
-                               "description": job.description[:3000]}) #executing the pipeline
+        prompt_text = PromptTemplate.from_template(prompt_template).format(title=job.title, company=job.company, description=job.description[:3000])
+        resp = groq_invoke(prompt_text, model="openai/gpt-oss-120b", temperature=0.7)
         return {"status": "success", "ai_cover_letter": resp.content} #if this process succeed then it sends an success message 
     except Exception as e: #or we use except statment if fails 
         return {"status": "error", "message": str(e)} #sends fail message 
@@ -187,13 +191,6 @@ def answer_questions(data: FormQuestions, user=Depends(get_current_user)):#gets 
         profile_yoe = 2.0 #sets 2 yoe as default in exxceptional case
 
     try: # then we try
-        llm = ChatGroq( #groq model
-            model="openai/gpt-oss-120b", # 🌟 FIX: Switched to 70b model for higher TPM limits #mode; version
-            temperature=0.0, #dead temperrature
-            max_tokens=4096,           #tokens limit of answering questions is set to 4096
-            groq_api_key=os.getenv("GROQ_API_KEY"),   #takes the api key from .env
-            model_kwargs={"response_format": {"type": "json_object"}}   #takes the output in jason format so it can answer to the specific questions and correct answer
-        )
 
         # ── Strip [Type: ...] hints from questions before sending to AI ──
         clean_questions = [
@@ -240,7 +237,7 @@ RULES:
    {{"score": <integer 0-100>, "answers": ["ans1", "ans2", ...]}}
    Exactly {len(clean_questions)} answers in order. PLAIN STRINGS ONLY inside the array. Do NOT add any extra keys like "reasoning" or "explanation".
 10. OPTIONS MATCHING: If a question includes [Options: A | B | C], your answer MUST be an exact string match to ONE of those provided options."""
-        resp = llm.invoke(prompt_template) # sends the formatted prompt to the groq model so that it can generate a response 
+        resp = groq_invoke(prompt_template, model="openai/gpt-oss-120b", temperature=0.0, max_tokens=4096, json_mode=True)
         raw = resp.content.strip()  # removes the lending and triling part fom the response from the model's output 
 
         json_start = raw.find('{') # search for the curly braces that is the start of the json response given by model
@@ -297,42 +294,14 @@ RULES:
             answers.append("Yes")  #append answers 
         answers = answers[:len(clean_questions)]  #finds the answer from the loop of json
         
-        capped_answers = []  #it will be used to store and format processed answers 
-        for i, ans in enumerate(answers):  #gives the indiex of iteams list and also the ans 
-            q = clean_questions[i].lower() if i < len(clean_questions) else ""  #lowercase the clean questions 
-
-            ans = re.sub(r'\*\*[^*]*\*\*', '', ans).strip() #removes the specific character 
-            ans = re.sub(r'\[Type:[^\]]*\]', '', ans).strip()  #removes
-            ans = re.sub(r'\[type:[^\]]*\]', '', ans).strip()  #removes 
-            is_yoe_question = any(k in q for k in ["experience", "years", "how many", "yoe"])  #for specific questions it find for words like the l=elements in the list 
-            
-            is_identity = any(k in q for k in ["phone", "mobile", "contact number", "email", "name", "location", "city", "address"]) #same 
-            if not is_identity and re.search(r'(phone|mobile|contact)\s*(number|no\.?)?', q): #search
-                is_identity = True   #the identity is true
-            if is_identity and ans.strip().lower() in ("yes", "no", "true", "false", "2", "1", "0"):  #checks the data fits or not
-                if re.search(r'(phone|mobile|contact)', q):  #search for specific domain
-                    raw_phone = str(profile.get("phone") or "").replace(" ","").replace("-","").replace("+","").replace("91","",1).strip()  #for phone 
-                    ans = raw_phone if raw_phone else ans  #phone
-                elif "email" in q:   #email
-                    em = profile.get("sender_email") or ""  #email 
-                    ans = em if em else ans   #email
-                elif any(k in q for k in ["location","city","address"]):    #address search
-                    loc = profile.get("current_location") or ""   #loc
-                    ans = loc if loc else ans   #loc
-            
-            if is_yoe_question:   #experience questions
-                try:  #try
-                    num = float(str(ans).replace("+", "").replace(",","").strip())  #replaces + to "" to empty strings in experince answers 
-                    if num > 40:  #if exp is more than 40
-                        num = float(profile_yoe) #years of exp in flaot
-                    ans = str(int(round(num)))  #ans in int and then convert to string 
-                except (ValueError, TypeError): #or error 
-                    ans = "2"   #default 2
-            capped_answers.append(ans)  #final and formatted answer that will be return in the dashboard
+        capped_answers = [
+            postprocess_answer(raw_q, clean_q, ans, profile, profile_yoe)
+            for raw_q, clean_q, ans in zip(data.questions, clean_questions, answers)
+        ]
         
         return {"status": "success", "answers": capped_answers, "match_score": match_score} #if succeed sends a success message 
     except Exception as e:  # otherwise 
-        import traceback  #handling errors
+        logger.exception("answer_questions failed")
         from fastapi.responses import JSONResponse  #importing jsonresponse from fastapi responses
         return JSONResponse( #response 
             status_code=200,  #status of scceful request
@@ -573,9 +542,10 @@ def agent_status(user=Depends(get_current_user)):  #fom dataset
         "next_scan":        scheduler_info["next_run"],  ##
         "last_activity":    dict(last_log) if last_log else None,   #
         "errors_last_hour": recent_errors,   ##
+        "groq_keys":        pool_status(),
     }
 
 if __name__ == "__main__":  #main calling 
     import uvicorn   #fastapi server
     port = int(os.environ.get("PORT", 8080))   ##server 
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)   #function calling 
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)   #function calling

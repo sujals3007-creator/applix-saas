@@ -8,7 +8,7 @@ import httpx
 import logging
 import re
 from database import get_db, log_activity, get_user_profile
-from langchain_groq import ChatGroq
+from groq_pool import groq_invoke
 from langchain_core.prompts import PromptTemplate
 
 logger = logging.getLogger("outreach")
@@ -157,11 +157,6 @@ def send_email(user_id: int, to_email: str, hr_name: str, job_title: str, compan
     video_url    = extract_url("Video Explanation URL")
 
     try:
-        llm = ChatGroq(
-            model="llama-3.1-8b-instant",
-            temperature=0.4,
-            groq_api_key=os.getenv("GROQ_API_KEY")
-        )
         prompt = PromptTemplate.from_template("""
         You are an expert copywriter writing a cold outreach email for a candidate to a recruiter.
 
@@ -176,15 +171,12 @@ def send_email(user_id: int, to_email: str, hr_name: str, job_title: str, compan
         Keep it under 5 sentences. Be professional, confident, and specific.
         Do NOT use placeholders like [Your Name].
         """)
-        chain = prompt | llm
-        ai_body = chain.invoke({
-            "hr_name": safe_name,
-            "company": company,
-            "job_title": job_title,
-            "achievements": achievements,
-            "fit": fit
-        }).content.strip()
+        ai_body = groq_invoke(prompt.format(
+            hr_name=safe_name, company=company, job_title=job_title,
+            achievements=achievements, fit=fit
+        ), model="llama-3.1-8b-instant", temperature=0.4).content.strip()
 
+        # Build the dynamic contact info block
         # Build the dynamic contact info block
         contact_info = full_name
         if phone:
@@ -193,15 +185,16 @@ def send_email(user_id: int, to_email: str, hr_name: str, job_title: str, compan
 
         # Build the dynamic links block
         links_block = []
-        if resume_url:   links_block.append(f"Resume: {resume_url}")
-        if video_url:    links_block.append(f"Video Intro: {video_url}")
+        if linkedin_url: links_block.append(f"LinkedIn: {linkedin_url}")
+        if github_url:   links_block.append(f"GitHub: {github_url}")
         if portfolio:    links_block.append(f"Portfolio: {portfolio}")
         if projects_url: links_block.append(f"Projects: {projects_url}")
-        if github_url:   links_block.append(f"GitHub: {github_url}")
-        if linkedin_url: links_block.append(f"LinkedIn: {linkedin_url}")
+        if resume_url:   links_block.append(f"Resume: {resume_url}")
+        if video_url:    links_block.append(f"Video Intro: {video_url}")
 
+        # Attach the links directly underneath the email, removing the "Relevant Links:" header
         if links_block:
-            contact_info += "\n\nRelevant Links:\n" + "\n".join(links_block)
+            contact_info += "\n" + "\n".join(links_block)
 
         body = (
             f"Dear {safe_name},\n\n"
