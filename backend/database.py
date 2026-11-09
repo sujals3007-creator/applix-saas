@@ -17,7 +17,38 @@ load_dotenv() #loading .env
 
 logger = logging.getLogger("database")  #from console 
 
-DB_URL = os.getenv("DATABASE_URL")  #db url from .env (neon)
+def _clean_db_url(url):
+    """Strip stray quotes/spaces pasted into Render's env box and force SSL (Neon requires it)."""
+    url = (url or "").strip().strip("\"'")
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url and "sslmode=" not in url and "localhost" not in url and "127.0.0.1" not in url and "/tmp" not in url and "host=" not in url:
+        url += ("&" if "?" in url else "?") + "sslmode=require"
+    return url
+
+DB_URL = _clean_db_url(os.getenv("DATABASE_URL"))  #db url from .env (neon)
+
+
+def _connect(retries: int = 4):
+    """
+    psycopg2.connect with retries. Neon free-tier computes auto-suspend after ~5 min idle and the
+    first connection after that can fail with 'SSL connection has been closed unexpectedly' or a
+    timeout while the compute wakes up. Retrying with a short back-off makes that invisible.
+    """
+    import time
+    if not DB_URL:
+        raise RuntimeError("DATABASE_URL is not set on the server (Render > Environment).")
+    last = None
+    for attempt in range(1, retries + 1):
+        try:
+            return psycopg2.connect(DB_URL, connect_timeout=15,
+                                    keepalives=1, keepalives_idle=30,
+                                    keepalives_interval=10, keepalives_count=5)
+        except psycopg2.OperationalError as e:
+            last = e
+            logger.warning(f"DB connect attempt {attempt}/{retries} failed: {str(e).strip()[:160]}")
+            time.sleep(min(2 * attempt, 6))
+    raise last
 
 class PgWrapper:  ##thin wrapper that keeps the code running with postgresql
     """
@@ -77,7 +108,7 @@ class PgWrapper:  ##thin wrapper that keeps the code running with postgresql
 
 
 def get_db():  #get database
-    conn = psycopg2.connect(DB_URL)   #making the data to dictionary
+    conn = _connect()
     conn.autocommit = True  #conn autocommit
     return PgWrapper(conn) # thin layer of wrapping the actual code 
 
@@ -235,7 +266,7 @@ def is_already_applied(user_id: int, job_id: str) -> bool:  #already applied job
 def is_ignored(user_id: int, job_id: str) -> bool: #to ignore the jobs that has been skipped 
     with get_db() as conn:   ##conn
         row = conn.execute(  #conn
-            "SELECT id FROM ignored_j bs WHERE user_id=%s AND job_id=%s", #slect from ignore jobs 
+            "SELECT id FROM ignored_jobs WHERE user_id=%s AND job_id=%s", #slect from ignore jobs 
             (user_id, job_id) ##
         ).fetchone()  ##fetch only one row
     return row is not None  #no none value
@@ -256,7 +287,7 @@ def get_pending_jobs_for_user(user_id: int, limit: int = 1) -> list[dict]:  ##pe
     FIX: Atomically fetches AND marks jobs as picked_up in one transaction.
     Uses FOR UPDATE SKIP LOCKED to be safe with multiple concurrent users.
     """
-    conn_raw = psycopg2.connect(DB_URL)  #from neon database making into python dictionaries
+    conn_raw = _connect()
     conn_raw.autocommit = False  ##cahnges made to dataset are not directly changed they have to go through the autocommit for saving the changes 
     try:  #try function
         with conn_raw.cursor(cursor_factory=DictCursor) as cur:  ###conn with the dictionary changes of data 
@@ -293,4 +324,4 @@ def get_user_profile(user_id: int) -> dict:   #calls for specific user profile f
             "SELECT * FROM candidate_profiles WHERE user_id=%s",  #sql command for selecting specific candidate profile 
             (user_id,)  #user id
         ).fetchone()   #fetch a specific row 
-        return dict(row) if row else {}  #return dict value if user was found otherwise an empty dictionary is send 
+        return dict(row) if row else {}  #return dict value if user was found otherwise an empty dictionary is send

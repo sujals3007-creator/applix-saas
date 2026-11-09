@@ -114,9 +114,52 @@ function deepQuerySelectorAll(selector, root = document) {
     return els;
 }
 
+function _parentOf(el) {
+    if (el.parentElement) return el.parentElement;
+    const root = el.getRootNode && el.getRootNode();
+    return root && root.host ? root.host : null;   // climb out of shadow roots
+}
+
+function _rectVisible(el, minW = 1, minH = 1) {
+    const r = el.getBoundingClientRect();
+    return r.width >= minW && r.height >= minH && window.getComputedStyle(el).display !== "none";
+}
+
+/** True if this element looks like the Easy Apply wizard: "Apply to <Company>" heading, "1/4 pages" progress, or the "application sent" screen. */
+function _looksLikeApplyModal(el) {
+    if (!_rectVisible(el, 200, 100)) return false;
+    const t = el.innerText || el.textContent || "";
+    return /^\s*apply to\b/im.test(t) ||
+           /\b\d+\s*\/\s*\d+\s*pages?\b/i.test(t) ||
+           /application (was )?(sent|submitted)/i.test(t);
+}
+
+/**
+ * Find the open Easy Apply modal WITHOUT relying on LinkedIn's class names (they are hashed and change).
+ *  1) semantic containers (dialog / role=dialog / aria-modal / old artdeco classes) that look like the wizard
+ *  2) structural: climb up from the Next / Review / Submit button to the smallest ancestor holding the wizard text
+ */
+function _findApplyModal() {
+    const semantic = deepQuerySelectorAll(".jobs-easy-apply-modal, .artdeco-modal, [role='dialog'], [role='alertdialog'], dialog[open], [aria-modal='true']")
+        .filter(el => !el.closest('[componentkey^="job-card-component-ref-"]') && _looksLikeApplyModal(el));
+    if (semantic.length) return semantic[semantic.length - 1];   // top-most
+
+    const actionRe = /^(next|review|submit application|submit|continue|back|done)$/i;
+    const btns = deepQuerySelectorAll("button").filter(b => _rectVisible(b) && actionRe.test((b.innerText || b.textContent || "").trim()));
+    for (const btn of btns) {
+        let el = _parentOf(btn);
+        for (let i = 0; i < 15 && el && el !== document.body && el !== document.documentElement; i++, el = _parentOf(el)) {
+            if (_looksLikeApplyModal(el)) return el;
+        }
+    }
+    return null;
+}
+
 function getActiveModal() {
+    const m = _findApplyModal();
+    if (m) return m;
     const modals = deepQuerySelectorAll(".jobs-easy-apply-modal, .artdeco-modal, [role='dialog']");
-    return modals.find(m => m.getBoundingClientRect().width > 100 && window.getComputedStyle(m).display !== "none" && m.querySelector("button, input")) || document.body;
+    return modals.find(el => el.getBoundingClientRect().width > 100 && window.getComputedStyle(el).display !== "none" && el.querySelector("button, input")) || document.body;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -244,7 +287,9 @@ async function _waitForRightPaneJob(jobId, timeoutMs = 12000) {
 async function _dismissBlockingModals() {
     await humanDelay(800, 1200);
     
-    const activeModals = deepQuerySelectorAll(".jobs-easy-apply-modal, .artdeco-modal, [role='dialog']").filter(m => m.getBoundingClientRect().width > 0 && window.getComputedStyle(m).display !== "none");
+    const activeModals = deepQuerySelectorAll(".jobs-easy-apply-modal, .artdeco-modal, [role='dialog'], [role='alertdialog'], dialog[open], [aria-modal='true']").filter(m => m.getBoundingClientRect().width > 0 && window.getComputedStyle(m).display !== "none");
+    const wizard = _findApplyModal();
+    if (wizard && !activeModals.includes(wizard)) activeModals.unshift(wizard);
     
     // 🌟 CRITICAL FIX: If no modal is open, stop immediately!
     // This prevents the agent from accidentally clicking the "Dismiss Job" 'X' icons on the left panel.
@@ -265,7 +310,7 @@ async function _dismissBlockingModals() {
         return;
     }
 
-    const closeSelectors = [".artdeco-modal__dismiss", "button[aria-label='Dismiss']", "button[aria-label='Close']", "button[data-control-name='post_apply_modal_dismiss']"];
+    const closeSelectors = [".artdeco-modal__dismiss", "button[aria-label='Dismiss']", "button[aria-label='Close']", "button[aria-label*='Dismiss' i]", "button[aria-label*='Close' i]", "button[data-control-name='post_apply_modal_dismiss']"];
     for (const sel of closeSelectors) {
         const btn = deepQuerySelectorAll(sel, searchRoot)[0];
         if (btn && btn.getBoundingClientRect().width > 0) { 
@@ -277,14 +322,29 @@ async function _dismissBlockingModals() {
     }
 }
 
+/** After clicking Submit: wait for LinkedIn's "Application sent" screen (or the wizard closing). Returns "sent" | "stuck". */
+async function _waitForSubmitResult(timeoutMs = 12000) {
+    const end = Date.now() + timeoutMs;
+    let goneReads = 0;
+    while (Date.now() < end) {
+        const m = _findApplyModal();
+        const txt = ((m ? (m.innerText || m.textContent) : document.body.innerText) || "");
+        if (/application (was )?(sent|submitted)|your application was sent|applied (just now|\d)/i.test(txt)) return "sent";
+        goneReads = m ? 0 : goneReads + 1;
+        if (goneReads >= 2) return "sent";   // wizard closed itself (checked twice to ignore a re-render blip)
+        await new Promise(r => setTimeout(r, 600));
+    }
+    return "stuck";
+}
+
 async function _abortCurrentApplication() {
     agentLog("⚠️ Aborting application to clear screen...", "#fbbf24");
-    const closeBtn = document.querySelector("button[aria-label='Dismiss'], button[aria-label='Close'], .artdeco-modal__dismiss");
-    if (closeBtn && closeBtn.getBoundingClientRect().width > 0) {
-        closeBtn.click();
-        await humanDelay(1000, 1500);
+    const root = _findApplyModal();
+    if (root) {
+        const closeBtn = deepQuerySelectorAll("button[aria-label*='Dismiss' i], button[aria-label*='Close' i], .artdeco-modal__dismiss", root).find(b => _rectVisible(b));
+        if (closeBtn) { closeBtn.click(); await humanDelay(1000, 1500); }
     }
-    const discardBtn = Array.from(document.querySelectorAll("button")).find(b => (b.innerText || "").toLowerCase().includes("discard") && b.getBoundingClientRect().width > 0);
+    const discardBtn = deepQuerySelectorAll("button").find(b => /discard/i.test(b.innerText || "") && _rectVisible(b));
     if (discardBtn) {
         discardBtn.click();
         await humanDelay(1000, 1500);
@@ -297,18 +357,35 @@ async function _abortCurrentApplication() {
 // ─────────────────────────────────────────────────────────────────
 async function setReactValue(element, value) {
     try {
-        if (element.tagName.toLowerCase() === "fieldset") {
+        if (element._isGroup || element.tagName.toLowerCase() === "fieldset") {
             const search = String(value).toLowerCase().trim();
-            const radios = Array.from(element.querySelectorAll("input[type='radio'], input[type='checkbox']"));
-            let matched = radios.find(r => {
-                const labelText = (r.nextElementSibling?.innerText || r.parentElement?.innerText || "").toLowerCase();
-                return labelText.includes(search) || (r.value || "").toLowerCase().includes(search);
-            });
-            if (!matched && radios.length > 0) {
-                if (search.includes("yes") || search === "1" || search === "true") matched = radios.find(r => (r.nextElementSibling?.innerText || "").toLowerCase().includes("yes"));
-                if (!matched) matched = radios[0]; 
+            const radios = element._isGroup ? element.radios
+                : Array.from(element.querySelectorAll("input[type='radio'], input[type='checkbox']"));
+            const txt = r => _optionText(r).toLowerCase();
+            const allBoxes = radios.length > 0 && radios.every(r => r.type === "checkbox");
+            if (allBoxes) {                                              // multi-select: "Python | Java"
+                const wanted = search.split(/\s*\|\s*/).filter(Boolean);
+                let any = false;
+                for (const r of radios) {
+                    const t = txt(r);
+                    const hit = wanted.some(w => t === w || t.includes(w) || (w.length > 2 && w.includes(t)));
+                    if (hit) { any = true; if (!r.checked) { _optionClickTarget(r).click(); if (!r.checked) r.click(); r.dispatchEvent(new Event("change", { bubbles: true })); } }
+                }
+                if (!any && radios[0] && !radios[0].checked) { _optionClickTarget(radios[0]).click(); }   // required group: tick at least one
+                return;
             }
-            if (matched) { matched.click(); matched.dispatchEvent(new Event("change", { bubbles: true })); }
+            let matched = radios.find(r => txt(r) === search)
+                       || radios.find(r => txt(r).includes(search) || (r.value || "").toLowerCase().includes(search));
+            if (!matched && radios.length > 0) {
+                if (search.includes("yes") || search === "1" || search === "true") matched = radios.find(r => txt(r).includes("yes"));
+                if (!matched) matched = radios[0];
+            }
+            if (matched) {
+                const target = _optionClickTarget(matched);
+                target.click();
+                if (!matched.checked) matched.click();
+                matched.dispatchEvent(new Event("change", { bubbles: true }));
+            }
             return;
         }
 
@@ -330,7 +407,12 @@ async function setReactValue(element, value) {
         if (tag === "select") {
             const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set;
             const search = String(value).toLowerCase().trim();
-            let opt = Array.from(element.options).find(o => o.value.toLowerCase().includes(search) || o.text.toLowerCase().includes(search));
+            const _real = Array.from(element.options).filter(o => o.value !== "" && !/^\s*select\b/i.test(o.text));
+            const _t = o => o.text.toLowerCase().trim();
+            let opt = _real.find(o => _t(o) === search || o.value.toLowerCase() === search)
+                   || _real.find(o => _t(o).startsWith(search))
+                   || _real.find(o => _t(o).includes(search) || (search.length > 2 && search.includes(_t(o))))
+                   || Array.from(element.options).find(o => o.value.toLowerCase().includes(search));
             if (!opt && element.options.length > 1) opt = element.options[1]?.value !== "" ? element.options[1] : element.options[element.options.length - 1];
             if (opt) {
                 if (setter) setter.call(element, opt.value); else element.value = opt.value;
@@ -340,6 +422,22 @@ async function setReactValue(element, value) {
         }
 
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+
+        // <input type="date"> only accepts a whole YYYY-MM-DD value (typing char-by-char leaves it empty)
+        if (tag === "input" && element.type === "date") {
+            let v = String(value).trim();
+            const m = v.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+            if (m) v = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+            setter.call(element, v);
+            element.dispatchEvent(new Event("input", { bubbles: true }));
+            element.dispatchEvent(new Event("change", { bubbles: true }));
+            element.blur();
+            return;
+        }
+        // Respect the field's character limit for free text (never cut numbers)
+        if (element.maxLength > 0 && String(value).length > element.maxLength && !/^[\d.,]+$/.test(String(value))) {
+            value = String(value).slice(0, element.maxLength).replace(/\s+\S*$/, "") || String(value).slice(0, element.maxLength);
+        }
         if (setter) setter.call(element, ""); else element.value = "";
         element.dispatchEvent(new Event("input", { bubbles: true }));
 
@@ -455,8 +553,7 @@ async function startSingleJobApply() {
             let modalOpened = false;
             for(let i=0; i<15; i++) {
                 await humanDelay(500, 800);
-                const m = deepQuerySelectorAll(".jobs-easy-apply-modal, .artdeco-modal").find(el => el.getBoundingClientRect().width > 100);
-                if (m) { modalOpened = true; break; }
+                if (_findApplyModal()) { modalOpened = true; break; }
             }
 
             if (!modalOpened) {
@@ -483,8 +580,152 @@ async function startSingleJobApply() {
     }
 }
 
-async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
+/** Fingerprint of the current wizard page ("3/4 pages" + heading) so we can tell whether Next/Review really advanced. */
+function _pageSig(modal) {
+    const t = ((modal && (modal.innerText || modal.textContent)) || "");
+    const prog = (t.match(/\b\d+\s*\/\s*\d+\s*pages?\b/i) || [""])[0];
+    const h = modal ? Array.from(modal.querySelectorAll("h1, h2, h3")).map(e => (e.innerText || "").trim()).join("|") : "";
+    return prog + "#" + h;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// GENERIC FORM-FIELD DISCOVERY (works without <label for> / fieldset / LinkedIn class names)
+// The new Easy Apply UI renders question text in plain divs/spans, so the old label-only scan found 0 questions.
+// ─────────────────────────────────────────────────────────────────
+const _JUNK_LINE = /^(invalid input|required|optional|\d+\s*\/\s*\d+|enter a (whole |decimal )?number.*|please enter.*|please make a selection.*|select an option|this field is required|make a selection.*)$/i;
+
+function _controlsIn(el) {
+    return Array.from(el.querySelectorAll("input, select, textarea"))
+        .filter(c => c.type !== "hidden" && c.type !== "file" && c.type !== "submit" && c.type !== "button");
+}
+
+function _cleanQ(t) {
+    return (t || "").replace(/\bRequired\b/ig, "").replace(/\*/g, "").replace(/\s+/g, " ").trim();
+}
+
+/** Visible text of the label belonging to one radio/checkbox option. */
+function _optionText(r) {
+    const root = r.getRootNode ? r.getRootNode() : document;
+    let lab = r.id ? Array.from(root.querySelectorAll("label")).find(l => l.htmlFor === r.id) : null;
+    if (!lab) lab = r.closest("label");
+    let t = lab ? (lab.innerText || lab.textContent) : "";
+    if (!t && r.nextElementSibling) t = r.nextElementSibling.innerText || r.nextElementSibling.textContent;
+    if (!t && r.parentElement) t = r.parentElement.innerText || r.parentElement.textContent;
+    return (t || "").replace(/\s+/g, " ").trim();
+}
+
+function _optionClickTarget(r) {
+    const root = r.getRootNode ? r.getRootNode() : document;
+    return (r.id ? Array.from(root.querySelectorAll("label")).find(l => l.htmlFor === r.id) : null) || r.closest("label") || r;
+}
+
+/** Question text for a single text/number/select/textarea control. */
+function _questionTextFor(ctrl, modal) {
+    const root = ctrl.getRootNode ? ctrl.getRootNode() : document;
+    const ids = (ctrl.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
+    if (ids.length) {
+        const t = ids.map(id => { const e = root.getElementById ? root.getElementById(id) : null; return e ? (e.innerText || e.textContent) : ""; }).join(" ");
+        if (_cleanQ(t)) return _cleanQ(t);
+    }
+    const lab = ctrl.id ? Array.from(root.querySelectorAll("label")).find(l => l.htmlFor === ctrl.id) : null;
+    if (lab && _cleanQ(lab.innerText || lab.textContent)) return _cleanQ(lab.innerText || lab.textContent);
+    const wrap = ctrl.closest("label");
+    if (wrap && _cleanQ(wrap.innerText || wrap.textContent)) return _cleanQ(wrap.innerText || wrap.textContent);
+
+    // Ignore the control's own value / option texts when reading the surrounding text
+    const ignore = new Set([(ctrl.value || "").trim().toLowerCase()]);
+    if (ctrl.tagName.toLowerCase() === "select") Array.from(ctrl.options).forEach(o => ignore.add(o.text.trim().toLowerCase()));
+
+    let el = ctrl.parentElement;
+    for (let i = 0; i < 8 && el && el !== modal; i++, el = el.parentElement) {
+        if (_controlsIn(el).length > 1) break;                       // reached a block that holds several questions
+        const lines = (el.innerText || el.textContent || "").split("\n").map(x => x.trim()).filter(Boolean)
+            .filter(l => !_JUNK_LINE.test(l) && !ignore.has(l.toLowerCase()));
+        if (lines.length) return _cleanQ(lines[0]);
+    }
+    return _cleanQ(ctrl.getAttribute("aria-label") || ctrl.placeholder || ctrl.name || "");
+}
+
+/** Question text for a radio group (all radios sharing one name). */
+function _groupQuestion(radios, modal) {
+    const first = radios[0];
+    const rg = first.closest("[role='radiogroup'], [role='group'], fieldset");
+    if (rg) {
+        const legend = rg.querySelector("legend");
+        if (legend && _cleanQ(legend.innerText || legend.textContent)) return _cleanQ(legend.innerText || legend.textContent);
+        const lb = (rg.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
+        if (lb.length) {
+            const root = rg.getRootNode ? rg.getRootNode() : document;
+            const t = lb.map(id => { const e = root.getElementById ? root.getElementById(id) : null; return e ? (e.innerText || e.textContent) : ""; }).join(" ");
+            if (_cleanQ(t)) return _cleanQ(t);
+        }
+    }
+    const opts = new Set(radios.map(r => _optionText(r).toLowerCase()));
+    let el = first.parentElement;
+    for (let i = 0; i < 8 && el && el !== modal; i++, el = el.parentElement) {
+        if (!radios.every(r => el.contains(r))) continue;           // climb until the block holds the whole group
+        const others = _controlsIn(el).filter(c => !radios.includes(c));
+        if (others.length) break;                                    // block also holds other questions
+        const lines = (el.innerText || el.textContent || "").split("\n").map(x => x.trim()).filter(Boolean)
+            .filter(l => !_JUNK_LINE.test(l) && !opts.has(l.toLowerCase()));
+        if (lines.length) return _cleanQ(lines[0]);
+    }
+    return "";
+}
+
+/** Fields the label/fieldset scan missed. Appends to questions[] / inputEls[] (same shape the filler expects). */
+function _collectGenericFields(modal, questions, inputEls) {
+    const covered = c => inputEls.some(e => e === c || (e.contains && e !== c && e.contains(c)) || (e._isGroup && e.radios.includes(c)));
+    const groups = new Map();
+    for (const c of _controlsIn(modal)) {
+        if (c.disabled || !_rectVisible(c) && !(c.type === "radio" || c.type === "checkbox")) continue;
+        if (covered(c)) continue;
+        if (c.type === "radio" || c.type === "checkbox") {
+            const grp = c.closest("[role='radiogroup'], [role='group'], fieldset");
+            const key = c.type + ":" + (c.name || (grp ? "grp" + Array.from(modal.querySelectorAll("[role='radiogroup'], [role='group'], fieldset")).indexOf(grp) : ""));
+            if (!c.name && !grp) continue;
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(c);
+            continue;
+        }
+        const near = ((c.closest("div") && c.closest("div").innerText) || "") + " " + (c.name || "") + " " + (c.id || "");
+        if (/\b(resume|cv|curriculum vitae|cover letter)\b/i.test(near.slice(0, 300))) continue;
+        const q = _questionTextFor(c, modal);
+        if (!q || /^\s*follow\b/i.test(q) || /stay up to date/i.test(q)) continue;
+        const isSel = c.tagName.toLowerCase() === "select";
+        const hasValue = isSel ? (c.selectedIndex > 0 || (c.value && !/select/i.test(c.value))) : !!(c.value && c.value.trim());
+        if (hasValue && /email|phone|mobile|country code|first name|last name|full name/i.test(q)) continue;
+        let optionsStr = "";
+        if (isSel) {
+            const opts = Array.from(c.options).map(o => o.text.trim()).filter(t => t && !/select/i.test(t));
+            if (opts.length) optionsStr = ` [Options: ${opts.join(" | ")}]`;
+        }
+        const fmtStr = (/^(text|)$/.test(c.type || "") && /(mm|dd|yyyy)/i.test(c.placeholder || "")) ? ` [Format: ${c.placeholder}]` : "";
+        questions.push(q + (c.type ? ` [Type: ${c.type}]` : "") + fmtStr + optionsStr);
+        inputEls.push(c);
+    }
+    for (const radios of groups.values()) {
+        if (radios.length < 2 && radios[0].type === "checkbox") continue;        // a lone checkbox = consent box, handled elsewhere
+        if (radios.some(r => r.checked)) continue;                               // already answered (LinkedIn saved answer)
+        const q = _groupQuestion(radios, modal);
+        if (!q || /^\s*follow\b/i.test(q)) continue;
+        const opts = radios.map(_optionText).filter(Boolean);
+        questions.push(q + " [Type: radio]" + (opts.length ? ` [Options: ${opts.join(" | ")}]` : ""));
+        inputEls.push({ _isGroup: true, radios });
+    }
+}
+
+async function scanAndAnswerForm(pageNum = 1, retryCount = 0, stuck = 0) {
     const modal = getActiveModal();
+    if (pageNum > 15 || stuck >= 2) {
+        agentLog(stuck >= 2
+            ? "❌ The form is not advancing (a required question could not be answered). Skipping this job."
+            : "❌ Too many form pages — something is wrong. Skipping this job.", "#ef4444");
+        await _abortCurrentApplication();
+        _jobStatus = "error";
+        return;
+    }
+    const _sigBefore = _pageSig(modal);
     agentLog(`🔍 Scanning form fields (Page ${pageNum})...`, "#c084fc");
 
     // 🌟 THE FIX 1: Tick mandatory checkboxes (Privacy/Consent) BEFORE checking validation
@@ -583,29 +824,43 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
     for (const label of deepQuerySelectorAll("label", modal)) {
         if (!label.getBoundingClientRect().width) continue;
         const inputId = label.getAttribute("for");
-        if (!inputId) continue;
-        const inp = allInputs.find(i => i.id === inputId);
+        let inp = inputId ? allInputs.find(i => i.id === inputId) : null;
+        if (!inp) inp = label.querySelector("input, select, textarea");                       // <label><input/></label>
+        if (!inp && label.parentElement) {                                                    // label + input as siblings
+            const sibs = label.parentElement.querySelectorAll("input, select, textarea");
+            if (sibs.length === 1) inp = sibs[0];
+        }
         if (!inp || inp.disabled || inp.type === "hidden" || inp.type === "file") continue;
+        if (questions.length && inputEls.includes(inp)) continue;
+        // Contact-info fields LinkedIn already filled from the profile (email, phone, country code, name): leave them alone
+        const _lbl = (label.innerText || "").toLowerCase();
+        if (/^\s*follow\b/.test(_lbl) || /stay up to date/.test(_lbl)) continue;   // "Follow <company>" is optional — never ask the AI
+        const _hasValue = (inp.tagName.toLowerCase() === "select")
+            ? (inp.selectedIndex > 0 || (inp.value && !/select/i.test(inp.value)))
+            : !!(inp.value && inp.value.trim());
+        if (_hasValue && /email|phone|mobile|country code|first name|last name|full name/.test(_lbl)) continue;
         
         if (inp.value && (inp.value.includes("urn:li:fsd_profileDocument") || inp.value.includes("urn:li:fsd_coverLetterDocument"))) {
             continue;
         }
         if ((inp.type === "radio" || inp.type === "checkbox") && inp.closest("fieldset")) continue;
+        if (inp.type === "radio") continue;   // each option's <label> is NOT a question — radio groups are handled by _collectGenericFields
         
         const valStr = (inp.value || "").toLowerCase();
-        const parentHtml = (inp.closest('.jobs-easy-apply-form-section__grouping') || inp.parentElement).innerHTML.toLowerCase();
-        
-        if (valStr.includes("urn:li:fsd_profiledocument") || 
-            valStr.includes("coverletter") || 
-            parentHtml.includes("resume") || 
-            parentHtml.includes("cv") || 
-            parentHtml.includes("cover letter")) {
-            continue; 
+        // IMPORTANT: look at visible TEXT / name / id only. LinkedIn's hashed class names (e.g. "fa4lcv")
+        // contain "cv" and used to make real questions get skipped as "resume" fields.
+        const groupEl = inp.closest('.jobs-easy-apply-form-section__grouping') || inp.parentElement;
+        const nearText = ((groupEl && (groupEl.innerText || groupEl.textContent)) || "") + " " + (inp.name || "") + " " + (inp.id || "");
+        if (valStr.includes("urn:li:fsd_profiledocument") ||
+            valStr.includes("coverletter") ||
+            /\b(resume|cv|curriculum vitae|cover letter)\b/i.test(nearText)) {
+            continue;
         }
 
         let txt = (label.innerText || "").replace(/Required/ig, "").replace(/\*/g, "").trim();
         if (txt.length) { 
             let inputType = inp.type ? ` [Type: ${inp.type}]` : "";
+            if (/^(text|)$/.test(inp.type || "") && /(mm|dd|yyyy)/i.test(inp.placeholder || "")) inputType += ` [Format: ${inp.placeholder}]`;
             let optionsStr = "";
             
             if (inp.tagName.toLowerCase() === "select") {
@@ -632,10 +887,13 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
             const labels = Array.from(fs.querySelectorAll("label")).map(l => l.innerText.trim()).filter(t => t);
             let optionsStr = labels.length > 0 ? ` [Options: ${labels.join(" | ")}]` : "";
             
-            questions.push(txt + " [Type: radio]" + optionsStr);
+            const _allBoxes = radios.every(r => r.type === "checkbox");
+            questions.push(txt + (_allBoxes && radios.length > 1 ? " [Type: checkbox]" : " [Type: radio]") + optionsStr);
             inputEls.push(fs); 
         }
     }
+
+    _collectGenericFields(modal, questions, inputEls);
 
     if (questions.length) {
         agentLog(`🧠 Found ${questions.length} questions. Asking Backend API...`, "#818cf8");
@@ -717,9 +975,19 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
                         continue; // Skip — don't overwrite LinkedIn's pre-filled value
                     }
 
-                    //1. Smart numerical defaults for missing AI answers
+                    // Only TEXT/NUMBER boxes get numeric coercion. Radio groups / dropdowns must keep the AI's word
+                    // ("No", "Hybrid") — before, a question containing "notice"/"days" turned a Yes/No answer into "30".
+                    const _tag = (inp.tagName || "").toLowerCase();
+                    // Optional question with no real answer from the profile: leave it blank instead of typing "Yes"
+                    if (/\boptional\b/.test(q) && /^(yes|no|0|data not found|n\/a)?$/i.test(String(ans).trim())) {
+                        agentLog(`⏭️ Optional field left blank: "${q.substring(0, 30)}..."`, "#cbd5e1");
+                        continue;
+                    }
+                    const isTextual = !inp._isGroup && _tag !== "fieldset" && _tag !== "select" && inp.type !== "radio" && inp.type !== "checkbox";
+                    if (!isTextual && (ans === "Data Not Found" || ans === "0" || ans === "")) ans = "Yes";
+
                     // 1. Smart numerical defaults for missing AI answers
-                    if (ans === "Data Not Found" || ans === "0" || ans === "") {
+                    if (isTextual && (ans === "Data Not Found" || ans === "0" || ans === "")) {
                         if (q.includes("experience") || q.includes("years") || q.includes("how many")) ans = "2";
                         else if (q.includes("ctc") || q.includes("salary") || q.includes("pay") || q.includes("ectc") || q.includes("compensation") || q.includes("lpa")) ans = "800000";
                         else if (q.includes("gpa") || q.includes("cgpa") || q.includes("grade")) ans = "3.5";
@@ -731,8 +999,12 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
 
 
                     // 2. Numeric field handling — salary/CTC checked FIRST to avoid YOE cap
-                    const isSalaryField = /ctc|salary|pay|ectc|compensation|lpa|package|remuneration/.test(q);
-                    const isYOEField = !isSalaryField && (
+                    // Numeric coercion only for SHORT answers in single-line boxes. Free-text answers ("Describe your
+                    // experience with LLMs...", textareas, date fields) must never be reduced to a digit.
+                    const _numericBox = isTextual && _tag !== "textarea" && inp.type !== "date" && String(ans).length <= 30
+                        && !/\b(date|when can you start|when are you available)\b/.test(q) && !/(mm|dd|yyyy)/i.test(inp.placeholder || "");
+                    const isSalaryField = _numericBox && /\b(ctc|salary|ectc|compensation|lpa|lakhs?|package|remuneration|stipend)\b|\bpay\b/.test(q);
+                    const isYOEField = _numericBox && !isSalaryField && (
                         q.includes("how many") || q.includes("experience") ||
                         q.includes("years") || q.includes("notice") ||
                         q.includes("how soon") || q.includes("days") ||
@@ -740,7 +1012,13 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
                         inp.type === "number"
                     );
 
-                    if (isSalaryField) {
+                    if (isSalaryField && /\b(lpa|lakhs?|lacs?)\b/.test(q)) {
+                        // Field is in LAKHS (e.g. "Expected CTC in LPA"): keep a small number like 12 or 12.5
+                        let v = ans.replace(/[^0-9.]/g, "");
+                        if (v === "" || parseFloat(v) <= 0) v = "10";
+                        if (parseFloat(v) >= 1000) v = String(Math.round(parseFloat(v) / 100000 * 10) / 10);
+                        ans = v;
+                    } else if (isSalaryField) {
                         // Salary: strip non-digits, NEVER cap (800000 is correct, not hallucinated)
                         ans = ans.replace(/[^0-9]/g, "");
                         if (ans === "" || parseInt(ans) < 1000) {
@@ -818,7 +1096,7 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
             _forceClickBtn(freshBtn);
             await humanDelay(2500, 3500);
             // Now find and click the actual Submit button
-            const submitBtn = deepQuerySelectorAll("button", modal).find(btn => {
+            const submitBtn = deepQuerySelectorAll("button", getActiveModal()).find(btn => {
                 const t = (btn.innerText || btn.textContent || "").toLowerCase().trim();
                 return t.includes("submit") && btn.getBoundingClientRect().width > 0;
             });
@@ -828,7 +1106,7 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
                 await humanDelay(3500, 5000);
             } else {
                 agentLog("⚠️ No Submit button after Review — page may have changed", "#fbbf24");
-                await scanAndAnswerForm(pageNum + 1, 0);
+                await scanAndAnswerForm(pageNum + 1, 0, _pageSig(getActiveModal()) === _sigBefore ? stuck + 1 : 0);
                 return;
             }
         } else {
@@ -837,7 +1115,7 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
             await humanDelay(3500, 5000);
         } 
         
-        const postErrors = deepQuerySelectorAll(".artdeco-inline-feedback--error", modal).filter(e => e.getBoundingClientRect().width > 0);
+        const postErrors = deepQuerySelectorAll(".artdeco-inline-feedback--error, [data-test-form-element-error-message]", getActiveModal()).filter(e => e.getBoundingClientRect().width > 0);
         if (postErrors.length) {
             agentLog("❌ Validation Error occurred ON submit.", "#ef4444");
             await _abortCurrentApplication();
@@ -845,12 +1123,19 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
             return; 
         }
         
+        const _submitRes = await _waitForSubmitResult();
+        if (_submitRes !== "sent") {
+            agentLog("❌ Submit clicked but LinkedIn never confirmed the application — aborting this job.", "#ef4444");
+            await _abortCurrentApplication();
+            _jobStatus = "error";
+            return;
+        }
         agentLog("✅ DONE! Application successfully sent.", "#10b981");
         await humanDelay(1500, 2000);
         agentLog("🧹 Clearing success modal...", "#94a3b8");
         for (let k = 0; k < 3; k++) {
             await _dismissBlockingModals();
-            const stillOpen = deepQuerySelectorAll(".jobs-easy-apply-modal, .artdeco-modal").find(m => m.getBoundingClientRect().width > 0 && window.getComputedStyle(m).display !== "none");
+            const stillOpen = _findApplyModal();
             if (!stillOpen) break;
             agentLog(`[Debug] Success modal still open, retrying kill... (${k+1})`, "#fbbf24");
         }
@@ -862,7 +1147,7 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0) {
         // Keep Cloud Run warm during page transition — routed through background.js (no CSP)
         chrome.runtime.sendMessage({ action: "WARMUP_BACKEND" });
         await humanDelay(2500, 3500);
-        await scanAndAnswerForm(pageNum + 1, 0);
+        await scanAndAnswerForm(pageNum + 1, 0, _pageSig(getActiveModal()) === _sigBefore ? stuck + 1 : 0);
     }
 }
 // ─────────────────────────────────────────────────────────────────

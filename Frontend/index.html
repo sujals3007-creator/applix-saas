@@ -818,6 +818,40 @@ function doLogout() {
 }
 function ah() { return { "Authorization": "Bearer " + authToken }; }
 
+// ── API helper ──
+// Reads the body as text first (a plain-text "Internal Server Error" no longer crashes r.json()),
+// retries when the Render free-tier server is still waking up, and reports the REAL problem
+// (HTTP status + server message) instead of a blanket "Connection error".
+const _sleep = ms => new Promise(r => setTimeout(r, ms));
+async function apiFetch(path, opts = {}, cfg = {}) {
+  const retries = cfg.retries ?? 2, timeoutMs = cfg.timeoutMs ?? 60000;
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(API + path, { ...opts, signal: ctrl.signal });
+      clearTimeout(timer);
+      const text = await r.text();
+      let data = null; try { data = JSON.parse(text); } catch (_) {}
+      if ([502, 503, 504].includes(r.status) && attempt < retries) {      // server still booting
+        if (cfg.onWake) cfg.onWake(attempt + 1);
+        await _sleep(4000 * (attempt + 1)); continue;
+      }
+      return { ok: r.ok, status: r.status, data, text };
+    } catch (e) {
+      clearTimeout(timer); lastErr = e;
+      if (attempt < retries) { if (cfg.onWake) cfg.onWake(attempt + 1); await _sleep(4000 * (attempt + 1)); continue; }
+    }
+  }
+  throw lastErr;
+}
+function sessionExpired() {
+  doLogout();
+  const st = document.getElementById("authSt");
+  if (st) { st.innerText = "⚠️ Session expired — please sign in again."; st.style.color = "#fca5a5"; }
+}
+
 // ── NAV ──
 function goTab(t) {
   // FIX: use style.display directly — classList.toggle "hidden" fails because CSS has !important
@@ -1018,11 +1052,20 @@ document.getElementById("saveProfBtn").addEventListener("click", async function(
     skills:             g("mf_core_skills")?.value.trim() || "",
   };
   try {
-    const r = await fetch(API + "/api/profile/save", { method: "POST", headers: { "Content-Type": "application/json", ...ah() }, body: JSON.stringify(payload) });
-    const d = await r.json();
-    if (d.status === "success") { st.innerText = "✅ Profile saved!"; st.style.color = "var(--success)"; recalcPC(); }
-    else { st.innerText = "❌ " + (d.message||"Save failed."); st.style.color = "var(--danger)"; }
-  } catch { st.innerText = "❌ Connection error."; st.style.color = "var(--danger)"; }
+    const res = await apiFetch("/api/profile/save",
+      { method: "POST", headers: { "Content-Type": "application/json", ...ah() }, body: JSON.stringify(payload) },
+      { onWake: () => { st.innerText = "⏳ Server is waking up — retrying…"; st.style.color = "var(--primary)"; } });
+    if (res.status === 401) { st.innerText = ""; sessionExpired(); return; }
+    const d = res.data || {};
+    if (res.ok && d.status === "success") { st.innerText = "✅ Profile saved!"; st.style.color = "var(--success)"; recalcPC(); }
+    else {
+      const why = d.message || d.detail || (res.text || "").slice(0, 120) || "Save failed.";
+      st.innerText = "❌ Save failed (HTTP " + res.status + "): " + why; st.style.color = "var(--danger)";
+    }
+  } catch (e) {
+    st.innerText = "❌ Cannot reach the server (" + (e && e.name === "AbortError" ? "timed out" : (e && e.message) || "network") + "). Check the Render service is running.";
+    st.style.color = "var(--danger)";
+  }
 });
 
 // ── DASHBOARD LOADERS ──
@@ -1084,8 +1127,10 @@ async function loadAgentStatus() {
 }
 async function loadProfile() {
   try {
-    const d = await (await fetch(API+"/api/profile",{headers:ah()})).json();
-    if (d.status !== "success" || !d.profile) return;
+    const res = await apiFetch("/api/profile", { headers: ah() });
+    if (res.status === 401) { sessionExpired(); return; }
+    const d = res.data || {};
+    if (d.status !== "success" || !d.profile) { console.warn("Profile load failed:", res.status, d.message || d.detail || res.text); return; }
     const p = d.profile;
     if (p.sender_email) document.getElementById("outreachEmail").value = p.sender_email;
     if (p.app_password) document.getElementById("outreachPass").value = p.app_password;

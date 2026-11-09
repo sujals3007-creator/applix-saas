@@ -10,10 +10,13 @@ FIXES:
 """
 from outreach import execute_outreach_flow   #from outrech file it importrs the execute outreach flow 
 from fastapi import FastAPI, UploadFile, File, Depends, BackgroundTasks #from fastapi library we import Fastapi, and uploadfile users can upload files, and files comes from upload file, depends is used to verify users, backgroundTasks are used to do to things in background like sending mail to hr or find mail of hr 
-from fastapi.middleware.cors import CORSMiddleware #helps our frontend and backend server to be accepted and run on browser
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Request
+from fastapi.responses import JSONResponse #helps our frontend and backend server to be accepted and run on browser
 from pydantic import BaseModel #checks the json data is correct or not 
 from typing import Optional #using optional as if we can allow two values in which one can be the real value and second can be optional
-import os, io, json, re, logging  #importing operating system, Io used for handling in memory files, json, regular expression used for searching text, logging
+import os, io, json, re, logging
+from datetime import datetime, timezone  #importing operating system, Io used for handling in memory files, json, regular expression used for searching text, logging
 import pdfplumber #used to extract text from pdf files
 from dotenv import load_dotenv # load secret keys and variables from .env file
 from groq_pool import groq_invoke, pool_status   # multi-key Groq with automatic fail-over
@@ -34,10 +37,28 @@ from cookie_auth import get_cookies, validate_cookies, save_cookies_to_env #chec
 
 app = FastAPI(title="AI Job Agent SaaS API", version="3.1") #title of the fastapi and the verson
 
+# IMPORTANT: this must be registered BEFORE CORSMiddleware. Starlette puts the last-added middleware
+# on the outside, so this way the JSON error response it builds still passes through CORS and gets the
+# Access-Control-Allow-Origin header. Without it, any unhandled exception becomes a bare 500 with NO CORS
+# headers, and the browser (Netlify -> Render) reports it as a network failure ("Connection error")
+# instead of the real error.
+@app.middleware("http")
+async def catch_all_errors(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        logger.exception(f"Unhandled error on {request.method} {request.url.path}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Server error: {type(e).__name__}: {str(e)[:300]}"},
+        )
+
+
 app.add_middleware(
     CORSMiddleware, #helps our acts a bridge between frontend and backend just like a middleware
     allow_origins=["*"], # allow clients to communicate to servers
-    allow_credentials=True, #allow cookies and auth coming from frontend
+    allow_credentials=False, # auth uses the Authorization header (Bearer token), not cookies
+
     allow_methods=["*"], # allows get, post,put, delete
     allow_headers=["*"], #specify which request should be permitted and using * means every request is allowed
 )
@@ -290,8 +311,10 @@ RULES:
             match_score = 50 # match score a default value as 50
         answers = [str(a).strip() for a in parsed.get("answers", [])] #convert each part of the answers to string and strip it and give the answers
 
-        while len(answers) < len(clean_questions): #as the answers less than the questions 
-            answers.append("Yes")  #append answers 
+        if len(answers) < len(clean_questions):
+            logger.warning(f"Model returned {len(answers)} answers for {len(clean_questions)} questions - padding the rest.")
+        while len(answers) < len(clean_questions): #as the answers less than the questions
+            answers.append("Data Not Found")  # extension turns this into a smart default (never a blind "Yes" in a salary box)
         answers = answers[:len(clean_questions)]  #finds the answer from the loop of json
         
         capped_answers = [
@@ -339,7 +362,7 @@ def save_profile(payload: ProfilePayload, user=Depends(get_current_user)):   #af
     yoe = min(float(payload.years_experience or 0), 40.0)   #the minimum is 0 or the the real exp or max is 40
 
     with get_db() as conn:   #conn-connection  this helps insert or update values from the dataset 
-        conn.execute("""    #tell to execute the following changes in the dataset 
+        conn.execute("""
             INSERT INTO candidate_profiles
               (user_id, target_roles, target_locations,
                phone, current_location, notice_period_days,
@@ -390,6 +413,44 @@ def get_profile(user=Depends(get_current_user)):  #looks for only authenticate p
     profile.pop("li_at", None) #li at cookie
     profile.pop("jsessionid", None)  #jsession cookie
     return {"status": "success", "profile": profile}  #sucess
+
+
+class CookiePayload(BaseModel):
+    li_at: str = ""
+    jsessionid: str = ""
+
+@app.post("/api/save-cookies")
+def save_cookies(payload: CookiePayload, user=Depends(get_current_user)):
+    """Extension harvests the LinkedIn session cookies and stores them on THIS user's profile row."""
+    li_at = payload.li_at.strip()
+    jsid = payload.jsessionid.strip().strip('"')
+    if not li_at or not jsid:
+        return {"status": "error", "message": "li_at and jsessionid are both required."}
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE candidate_profiles SET li_at=%s, jsessionid=%s, cookies_saved_at=%s WHERE user_id=%s",
+            (li_at, jsid, datetime.now(timezone.utc).isoformat(), user["user_id"]),
+        )
+        if cur.rowcount == 0:
+            conn.execute(
+                "INSERT INTO candidate_profiles (user_id, li_at, jsessionid, cookies_saved_at) VALUES (%s,%s,%s,%s)",
+                (user["user_id"], li_at, jsid, datetime.now(timezone.utc).isoformat()),
+            )
+    return {"status": "success"}
+
+
+@app.get("/api/health")
+def health():
+    """Public health check: confirms the backend can actually reach Neon (no secrets exposed)."""
+    try:
+        with get_db() as conn:
+            conn.execute("SELECT 1").fetchone()
+        db_ok, db_err = True, None
+    except Exception as e:
+        db_ok, db_err = False, f"{type(e).__name__}: {str(e)[:160]}"
+    return {"status": "ok" if db_ok else "error", "db": db_ok, "db_error": db_err,
+            "groq_keys": pool_status()["total_keys"],
+            "jwt_secret_set": bool((os.getenv("JWT_SECRET") or "").strip())}
 
 
 # ── Auto-trigger: extension polls for new jobs ───────────────────
