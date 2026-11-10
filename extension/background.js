@@ -11,6 +11,19 @@
 
 const BACKEND_URL = "https://ai-job-agent-backend-qmq1.onrender.com";
 const SCAN_INTERVAL_MINUTES = 5;
+const DAILY_APPLY_CAP = 50;                 // hard stop per calendar day (ban safety)
+const JOB_TIMEOUT_MS  = 10 * 60 * 1000;     // a human-paced job can take several minutes
+// Random 25–110s gap between jobs, with a longer 3–6 min "coffee break" about 1 time in 8
+function humanGapMs() {
+    if (Math.random() < 0.125) return 180000 + Math.floor(Math.random() * 180000);
+    return 25000 + Math.floor(Math.random() * 85000);
+}
+async function bumpDailyCount() {
+    const d = await new Promise((r) => chrome.storage.local.get(["dailyApply"], r));
+    const today = new Date().toDateString();
+    const cur = d.dailyApply && d.dailyApply.date === today ? d.dailyApply.count : 0;
+    await new Promise((r) => chrome.storage.local.set({ dailyApply: { date: today, count: cur + 1 } }, r));
+}
 
 let isProcessingQueue = false;
 let watchdogTimer = null;
@@ -49,7 +62,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === "start_campaign" && request.urls) {
         chrome.storage.local.get(["jobQueue"], (data) => {
             let queue = data.jobQueue || [];
-            queue.push(...request.urls);
+            const idOf = (u) => (u.match(/\/view\/(\d+)|currentJobId=(\d+)/) || []).slice(1).find(Boolean);
+            const have = new Set(queue.map(idOf).filter(Boolean));
+            for (const u of request.urls) {
+                const id = idOf(u);
+                if (id && have.has(id)) continue;
+                if (id) have.add(id);
+                queue.push(u);
+            }
+
+            // A campaign is already running: only add to the queue. Never switch the campaign tab.
+            if (isProcessingQueue) {
+                chrome.storage.local.set({ jobQueue: queue });
+                return;
+            }
 
             let tabId = sender.tab ? sender.tab.id : null;
 
@@ -82,7 +108,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
 
         isProcessingQueue = false;
-        setTimeout(processNextJob, 8000); // 8s gap between jobs
+        const _bump = request.status === "success" ? bumpDailyCount() : Promise.resolve();
+        _bump.then(() => setTimeout(processNextJob, humanGapMs()));   // randomized human gap
         sendResponse({ status: "acknowledged" });
         return true;
     }
@@ -470,7 +497,7 @@ function startProcessing(queue, tabId) {
 function processNextJob() {
     clearTimeout(watchdogTimer);
 
-    chrome.storage.local.get(["jobQueue", "campaignTabId", "targetRoles", "targetLocations", "manualCampaignRole", "manualCampaignLocation", "campaignSearchQuery"], (data) => {
+    chrome.storage.local.get(["jobQueue", "campaignTabId", "targetRoles", "targetLocations", "manualCampaignRole", "manualCampaignLocation", "campaignSearchQuery", "dailyApply"], (data) => {
         const queue         = data.jobQueue      || [];
         const campaignTabId = data.campaignTabId;
         // 🌟 FIX: Check for manual override from popup.js first
@@ -491,6 +518,14 @@ function processNextJob() {
         if (queue.length === 0) {
             isProcessingQueue = false;
             console.log("[Campaign] Queue empty. Waiting for next scan.");
+            return;
+        }
+
+        const _today = new Date().toDateString();
+        const _doneToday = data.dailyApply && data.dailyApply.date === _today ? data.dailyApply.count : 0;
+        if (_doneToday >= DAILY_APPLY_CAP) {
+            isProcessingQueue = false;
+            console.log(`[Campaign] Daily cap (${DAILY_APPLY_CAP}) reached. Queue kept for tomorrow.`);
             return;
         }
 
@@ -517,12 +552,12 @@ function processNextJob() {
 
         console.log(`[Campaign] Loading job: ${nextUrl}`);
 
-        // Watchdog: skip frozen tabs after 2.5 mins
+        // Watchdog: skip frozen tabs after JOB_TIMEOUT_MS (human-paced jobs take minutes)
         watchdogTimer = setTimeout(() => {
             console.warn("⏱️ Watchdog triggered! Tab froze. Auto-Skipping...");
             isProcessingQueue = false;
             processNextJob();
-        }, 150000);
+        }, JOB_TIMEOUT_MS);
 
         if (campaignTabId) {
             chrome.tabs.update(campaignTabId, { url: nextUrl, active: true });

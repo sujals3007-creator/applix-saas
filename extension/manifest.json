@@ -1,7 +1,7 @@
 ﻿{
   "manifest_version": 3,
   "name": "AI Job Agent",
-  "version": "3.1",
+  "version": "3.2",
   "description": "AI-powered LinkedIn Easy Apply automation.",
   "permissions": [
     "storage",

@@ -286,23 +286,37 @@ async function _waitForRightPaneJob(jobId, timeoutMs = 12000) {
 // ─────────────────────────────────────────────────────────────────
 async function _dismissBlockingModals() {
     await humanDelay(800, 1200);
-    
-    const activeModals = deepQuerySelectorAll(".jobs-easy-apply-modal, .artdeco-modal, [role='dialog'], [role='alertdialog'], dialog[open], [aria-modal='true']").filter(m => m.getBoundingClientRect().width > 0 && window.getComputedStyle(m).display !== "none");
-    const wizard = _findApplyModal();
-    if (wizard && !activeModals.includes(wizard)) activeModals.unshift(wizard);
-    
-    // 🌟 CRITICAL FIX: If no modal is open, stop immediately!
-    // This prevents the agent from accidentally clicking the "Dismiss Job" 'X' icons on the left panel.
-    if (activeModals.length === 0) return;
-    
-    const searchRoot = activeModals[0];
 
+    // ── GUARD: an in-progress Easy Apply form must NEVER be closed from here. ──
+    // Closing it (the X button) is what made LinkedIn show "Save this application? Discard / Save".
+    // The only wizard screen we may close is the final "Application sent" screen.
+    const wizard = _findApplyModal();
+    const wizardText = wizard ? (wizard.innerText || wizard.textContent || "") : "";
+    const wizardIsSentScreen = /application (was )?(sent|submitted)|your application was sent/i.test(wizardText);
+    if (wizard && !wizardIsSentScreen) return;
+
+    const activeModals = deepQuerySelectorAll(".jobs-easy-apply-modal, .artdeco-modal, [role='dialog'], [role='alertdialog'], dialog[open], [aria-modal='true']")
+        .filter(m => m.getBoundingClientRect().width > 0 && window.getComputedStyle(m).display !== "none");
+    if (wizard && wizardIsSentScreen && !activeModals.includes(wizard)) activeModals.unshift(wizard);
+
+    // No modal open -> stop, so we never click the "Dismiss job" X icons in the left list.
+    if (activeModals.length === 0) return;
+
+    const searchRoot = activeModals[0];
+    const rootText = (searchRoot.innerText || searchRoot.textContent || "");
     const allBtns = deepQuerySelectorAll("button", searchRoot).filter(b => b.getBoundingClientRect().width > 0);
+
+    // If LinkedIn's "Save this application?" dialog is somehow open, choose SAVE (non-destructive). Never Discard.
+    if (/save this application|discard application/i.test(rootText)) {
+        const saveBtn = allBtns.find(b => /^save$/i.test((b.innerText || "").trim()));
+        if (saveBtn) { agentLog("[Debug] Save-application dialog -> clicking Save (never Discard)", "#d946ef"); saveBtn.click(); await humanDelay(1000, 1500); }
+        return;
+    }
+
     const dismissBtn = allBtns.find(b => {
         const t = (b.innerText || "").toLowerCase().trim();
-        return ["done", "return to job search", "continue applying", "got it", "no thanks", "dismiss", "close", "leave", "discard"].includes(t);
+        return ["done", "return to job search", "got it", "no thanks"].includes(t);
     });
-
     if (dismissBtn) {
         agentLog(`[Debug] Clicking text popup button: "${dismissBtn.innerText.trim()}"`, "#d946ef");
         dismissBtn.click();
@@ -310,14 +324,14 @@ async function _dismissBlockingModals() {
         return;
     }
 
-    const closeSelectors = [".artdeco-modal__dismiss", "button[aria-label='Dismiss']", "button[aria-label='Close']", "button[aria-label*='Dismiss' i]", "button[aria-label*='Close' i]", "button[data-control-name='post_apply_modal_dismiss']"];
+    const closeSelectors = [".artdeco-modal__dismiss", "button[aria-label='Dismiss']", "button[aria-label='Close']", "button[data-control-name='post_apply_modal_dismiss']"];
     for (const sel of closeSelectors) {
         const btn = deepQuerySelectorAll(sel, searchRoot)[0];
-        if (btn && btn.getBoundingClientRect().width > 0) { 
+        if (btn && btn.getBoundingClientRect().width > 0) {
             agentLog(`[Debug] Clicking popup 'X' icon`, "#d946ef");
-            btn.click(); 
-            await humanDelay(1000, 1500); 
-            return; 
+            btn.click();
+            await humanDelay(1000, 1500);
+            return;
         }
     }
 }
@@ -338,18 +352,10 @@ async function _waitForSubmitResult(timeoutMs = 12000) {
 }
 
 async function _abortCurrentApplication() {
-    agentLog("⚠️ Aborting application to clear screen...", "#fbbf24");
-    const root = _findApplyModal();
-    if (root) {
-        const closeBtn = deepQuerySelectorAll("button[aria-label*='Dismiss' i], button[aria-label*='Close' i], .artdeco-modal__dismiss", root).find(b => _rectVisible(b));
-        if (closeBtn) { closeBtn.click(); await humanDelay(1000, 1500); }
-    }
-    const discardBtn = deepQuerySelectorAll("button").find(b => /discard/i.test(b.innerText || "") && _rectVisible(b));
-    if (discardBtn) {
-        discardBtn.click();
-        await humanDelay(1000, 1500);
-    }
-    await _dismissBlockingModals();
+    // Deliberately does NOT click the form's X or "Discard". The campaign moves on by navigating the tab
+    // to the next job (background.js), which leaves the half-filled form alone and never triggers the
+    // "Save / Discard application" dialog.
+    agentLog("⚠️ Skipping this job (leaving the form untouched, no close / discard).", "#fbbf24");
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -491,7 +497,7 @@ async function setReactValue(element, value) {
 function _getFormActionBtn(modal) {
     return deepQuerySelectorAll("button", modal).find(btn => {
         const t = (btn.innerText || btn.textContent || "").toLowerCase().trim();
-        const isAction = t === "next" || t === "review" || t.includes("submit") || t.includes("continue") || t === "agree" || t.includes("review your");
+        const isAction = t === "next" || t === "review" || t.includes("submit") || /^continue( to next step)?$/.test(t) || t === "agree" || t.includes("review your");
         const isBack = t.includes("back") || t.includes("cancel");
         return isAction && !isBack && btn.getBoundingClientRect().width > 0;
     });
@@ -500,9 +506,6 @@ function _getFormActionBtn(modal) {
 function _forceClickBtn(btn) {
     try {
         btn.scrollIntoView({ behavior: "smooth", block: "center" });
-        // Strip the disabled attribute to force LinkedIn to show validation errors if stuck
-        btn.removeAttribute("disabled"); 
-        btn.classList.remove("disabled");
         btn.click();
         ["pointerdown", "mousedown", "pointerup", "mouseup"].forEach(evType => {
             btn.dispatchEvent(new MouseEvent(evType, { bubbles: true, cancelable: true, view: window }));
@@ -726,6 +729,11 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0, stuck = 0) {
         return;
     }
     const _sigBefore = _pageSig(modal);
+    if (retryCount === 0) {
+        const readMs = 8000 + Math.floor(Math.random() * 14000);   // 8–22s "reading the page" like a person
+        agentLog(`🧑 Reading page ${pageNum} for ${Math.round(readMs / 1000)}s...`, "#94a3b8");
+        await new Promise(r => setTimeout(r, readMs));
+    }
     agentLog(`🔍 Scanning form fields (Page ${pageNum})...`, "#c084fc");
 
     // 🌟 THE FIX 1: Tick mandatory checkboxes (Privacy/Consent) BEFORE checking validation
@@ -795,11 +803,9 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0, stuck = 0) {
     const errors = deepQuerySelectorAll(".artdeco-inline-feedback--error, [data-test-form-element-error-message]", modal).filter(e => e.getBoundingClientRect().width > 0);
 
     if (errors.length) {
-        agentLog("❌ Hard Validation Error detected on page.", "#ef4444");
-        await _abortCurrentApplication();
-        _jobStatus = "error";
-        // 🌟 THE FIX 2: Removed rogue sendMessage to prevent queue freezing
-        return;
+        // A validation message just means a required answer was missing/invalid. Re-answer this page;
+        // the "stuck" counter (page signature unchanged after Next) skips the job if it never clears.
+        agentLog("⚠️ Validation message on page — re-answering fields.", "#fbbf24");
     }
 
     const actionBtn = _getFormActionBtn(modal);
@@ -807,7 +813,6 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0, stuck = 0) {
     if (!actionBtn) {
         if (retryCount < 6) { 
             agentLog(`⚠️ Form buttons obscured or loading. Retrying (${retryCount+1}/6)...`, "#fbbf24");
-            await _dismissBlockingModals();
             await humanDelay(1500, 2000); 
             return scanAndAnswerForm(pageNum, retryCount + 1); 
         }
@@ -1090,6 +1095,7 @@ async function scanAndAnswerForm(pageNum = 1, retryCount = 0, stuck = 0) {
     const isReview = btnText === "review" || btnText.includes("review your");
 
     if (isSubmit || isReview) {
+        await humanDelay(6000, 15000);   // look over the answers before Review / Submit
         if (isReview) {
             // Click Review to get to the final Submit page
             agentLog("📋 Clicking Review to reach Submit page...", "#10b981");

@@ -150,8 +150,14 @@
     let _scanTimer  = null;
     const SCAN_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
+    async function _autoScanEnabled() {
+        const d = await new Promise(res => chrome.storage.local.get(["autoScanEnabled"], res));
+        return !!d.autoScanEnabled;
+    }
+
     async function _scanAndQueueJobs() {
         if (_scanActive) return;
+        if (!(await _autoScanEnabled())) return;   // only when the user pressed "Start Auto Scan"
         _scanActive = true;
 
         try {
@@ -285,6 +291,7 @@
         _pollActive = true;
 
         _pollTimer = setInterval(async function() {
+            if (!(await _autoScanEnabled())) return;
             // Route through background.js — content.js fetch to backend is CSP-blocked
             chrome.runtime.sendMessage({ action: "POLL_PENDING_JOBS" }, (data) => {
                 if (!data) return;
@@ -300,9 +307,8 @@
     }
 
     // Auto-start 2 seconds after page load
-    setTimeout(() => {
-        _startPolling();
-        _startAutoScan();
+    setTimeout(async () => {
+        if (await _autoScanEnabled()) { _startPolling(); _startAutoScan(); }
     }, 2000);
 
     async function _notifyBackend(status, hr_name = null, hr_url = null, match_score = 0) {
