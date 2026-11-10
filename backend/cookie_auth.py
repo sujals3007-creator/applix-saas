@@ -226,4 +226,3 @@ def save_cookies_to_env(li_at: str, jsessionid: str) -> bool:
     except Exception as e:
         logger.error(f"❌ Failed to save cookies to .env: {e}")
         return False
- 
