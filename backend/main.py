@@ -100,7 +100,7 @@ USER_RESUME_TEXT = "" #stroring the data extracted from resume and calculates th
 
 @app.get("/") # get request made by fastapi to check if the backend is running perfectly
 def read_root(): #function ask for health check of backend
-    return {"status": "Active", "message": "AI Job Agent SaaS Backend is running!"} # ask for the specific details listed in the code
+    return {"status": "Active", "message": "AI Job Agent SaaS Backend is running!", "commit": (os.getenv("RENDER_GIT_COMMIT") or "unknown")[:7]} # ask for the specific details listed in the code
 
 @app.post("/api/parse-resume-to-form") #post request made by frontend when the user upload a resume it parse the resume and then fill the master form automatically
 async def parse_resume_to_form(file: UploadFile = File(...), user=Depends(get_current_user)): #check for vali authentitcaton user befor parsing the resume 
